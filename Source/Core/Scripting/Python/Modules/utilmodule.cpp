@@ -1,9 +1,7 @@
 #include "utilmodule.h"
 
-#include <nfd.h>
-
 #include "Common/FileUtil.h"
-#include "Common/Logging/Log.h"
+#include "Common/StringUtil.h"
 #include "Common/Config/Config.h"
 #include "Core/Config/MainSettings.h"
 #include "Core/Core.h"
@@ -11,6 +9,11 @@
 #include "Core/System.h"
 #include "Scripting/Python/Utils/module.h"
 #include "Scripting/Python/Utils/as_py_func.h"
+
+#ifdef _WIN32
+#include <Windows.h>
+#include <commdlg.h>
+#endif
 
 struct FileState
 {
@@ -86,20 +89,25 @@ static PyObject* save_screenshot(PyObject* module, PyObject* args, PyObject* kwa
 
 static PyObject* open_file(PyObject* module, PyObject* args)
 {
-  std::string filePath;
+#ifdef _WIN32
+  wchar_t file_path[MAX_PATH] = {};
+  wchar_t filter[] = L"All Files\0*.*\0\0";
 
-  NFD_Init();
-  
-  nfdchar_t *outPath;
-  nfdfilteritem_t filterItem[1] = { { "All Files", "*" } };
-  nfdresult_t result = NFD_OpenDialog(&outPath, filterItem, 1, NULL);
+  OPENFILENAMEW open_file_name = {};
+  open_file_name.lStructSize = sizeof(open_file_name);
+  open_file_name.lpstrFilter = filter;
+  open_file_name.lpstrFile = file_path;
+  open_file_name.nMaxFile = MAX_PATH;
+  open_file_name.Flags = OFN_EXPLORER | OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
 
-  if(result != NFD_OKAY)
-  	Py_RETURN_NONE;
+  if(!GetOpenFileNameW(&open_file_name))
+    Py_RETURN_NONE;
 
-  filePath = outPath;
- 
-  return Py_BuildValue("s", filePath.c_str());
+  const std::string utf8_path = WStringToUTF8(file_path);
+  return Py_BuildValue("s", utf8_path.c_str());
+#else
+  Py_RETURN_NONE;
+#endif
 }
 
 static PyObject* toggle_play(PyObject* module, PyObject* args)

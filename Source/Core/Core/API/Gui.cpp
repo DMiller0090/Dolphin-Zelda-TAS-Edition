@@ -122,7 +122,6 @@ void Gui::CreateThinOutline(const Vec2f& pos, u32 color, std::string& text)
 
 void Gui::DrawText(const Vec2f pos, u32 color, std::string text)
 {
-  CreateThinOutline(pos, color, text);
   GUI_DRAW_DEFERRED(AddText(pos, ARGBToABGR(color), text.c_str()));
 }
 

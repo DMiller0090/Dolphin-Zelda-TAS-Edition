@@ -10,26 +10,36 @@
 #include <variant>
 #include <vector>
 
+#include <QAction>
 #include <QAbstractItemView>
 #include <QAbstractTableModel>
 #include <QApplication>
 #include <QBrush>
 #include <QCheckBox>
+#include <QContextMenuEvent>
 #include <QColor>
+#include <QCursor>
+#include <QEvent>
 #include <QFile>
 #include <QFileDialog>
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QHeaderView>
+#include <QHideEvent>
 #include <QHBoxLayout>
 #include <QInputDialog>
 #include <QItemSelectionModel>
 #include <QLabel>
+#include <QKeySequence>
 #include <QMessageBox>
+#include <QMenu>
+#include <QMouseEvent>
 #include <QPushButton>
+#include <QRubberBand>
 #include <QScrollArea>
 #include <QScopedValueRollback>
 #include <QSignalBlocker>
+#include <QShowEvent>
 #include <QSpinBox>
 #include <QStackedWidget>
 #include <QTableView>
@@ -39,9 +49,12 @@
 
 #include "Common/CommonTypes.h"
 #include "Core/Core.h"
+#include "Core/HotkeyManager.h"
 #include "Core/HW/WiimoteEmu/Extension/Nunchuk.h"
 #include "Core/HW/WiimoteEmu/MotionPlus.h"
 #include "Core/System.h"
+#include "DolphinQt/Host.h"
+#include "InputCommon/GCPadStatus.h"
 
 namespace
 {
@@ -59,6 +72,7 @@ constexpr double k_gyro_stretch =
     static_cast<double>(WiimoteEmu::MotionPlus::CALIBRATION_FAST_SCALE_DEGREES) /
     WiimoteEmu::MotionPlus::CALIBRATION_SLOW_SCALE_DEGREES;
 constexpr int k_gyro_min = 0;
+constexpr int k_drag_hold_ms = 750;
 const int k_gyro_max =
     static_cast<int>(std::lround(WiimoteEmu::MotionPlus::MAX_VALUE * k_gyro_stretch));
 const int k_gyro_center =
@@ -129,31 +143,74 @@ std::optional<int> GetSingleActiveWiimoteFromHeader(const Movie::DTMHeader& head
   return active >= 0 ? std::optional<int>(active) : std::nullopt;
 }
 
-QString FormatGameFrame(const std::optional<u64>& frame)
+bool IsVisibleIRPoint(const WiimoteEmu::CameraPoint& point)
 {
-  return frame.has_value() ? QString::number(*frame) : QString();
+  return point.position.x != 0xffff && point.position.y != 0xffff;
 }
 
-std::vector<std::optional<u64>> PopulateMissingGameFrames(std::vector<std::optional<u64>> row_game_frames,
-                                                          const size_t row_count,
-                                                          const u64 current_frame,
-                                                          const u64 current_input_row)
+Movie::ControllerState MakeNeutralGCStateLike(const Movie::ControllerState& like)
 {
-  row_game_frames.resize(row_count);
+  Movie::ControllerState neutral = like;
+  neutral.Start = false;
+  neutral.A = false;
+  neutral.B = false;
+  neutral.X = false;
+  neutral.Y = false;
+  neutral.Z = false;
+  neutral.DPadUp = false;
+  neutral.DPadDown = false;
+  neutral.DPadLeft = false;
+  neutral.DPadRight = false;
+  neutral.L = false;
+  neutral.R = false;
+  neutral.disc = false;
+  neutral.reset = false;
+  neutral.get_origin = false;
+  neutral.TriggerL = 0;
+  neutral.TriggerR = 0;
+  neutral.AnalogStickX = GCPadStatus::MAIN_STICK_CENTER_X;
+  neutral.AnalogStickY = GCPadStatus::MAIN_STICK_CENTER_Y;
+  neutral.CStickX = GCPadStatus::C_STICK_CENTER_X;
+  neutral.CStickY = GCPadStatus::C_STICK_CENTER_Y;
+  return neutral;
+}
 
-  const s64 frame_base =
-      static_cast<s64>(current_frame) - static_cast<s64>(current_input_row);
+Movie::WiiRuntimeInputRow MakeNeutralWiiRowLike(const Movie::WiiRuntimeInputRow& like)
+{
+  Movie::WiiRuntimeInputRow neutral = like;
+  neutral.is_reset = false;
 
-  for (size_t row = 0; row < row_count; ++row)
+  WiimoteEmu::DesiredWiimoteState state;
+  if (!like.is_reset)
+    WiimoteEmu::DeserializeDesiredState(&state, like.serialized_state);
+
+  state.buttons.hex = 0;
+  state.acceleration = WiimoteEmu::DesiredWiimoteState::DEFAULT_ACCELERATION;
+  state.camera_points = WiimoteEmu::DesiredWiimoteState::DEFAULT_CAMERA;
+  state.battery = 100;
+
+  if (state.motion_plus.has_value())
   {
-    if (row_game_frames[row].has_value())
-      continue;
-
-    const s64 derived = frame_base + static_cast<s64>(row);
-    row_game_frames[row] = static_cast<u64>(std::max<s64>(0, derived));
+    state.motion_plus->gyro.value.x = WiimoteEmu::MotionPlus::ZERO_VALUE;
+    state.motion_plus->gyro.value.y = WiimoteEmu::MotionPlus::ZERO_VALUE;
+    state.motion_plus->gyro.value.z = WiimoteEmu::MotionPlus::ZERO_VALUE;
+    state.motion_plus->is_slow = {};
   }
 
-  return row_game_frames;
+  if (std::holds_alternative<WiimoteEmu::Nunchuk::DataFormat>(state.extension.data))
+  {
+    auto nunchuk = std::get<WiimoteEmu::Nunchuk::DataFormat>(state.extension.data);
+    nunchuk.jx = WiimoteEmu::Nunchuk::STICK_CENTER;
+    nunchuk.jy = WiimoteEmu::Nunchuk::STICK_CENTER;
+    nunchuk.SetButtons(0);
+    nunchuk.SetAccel(WiimoteEmu::Nunchuk::DataFormat::AccelType(k_nunchuk_accel_zero,
+                                                                k_nunchuk_accel_zero,
+                                                                k_nunchuk_accel_one));
+    state.extension.data = nunchuk;
+  }
+
+  neutral.serialized_state = WiimoteEmu::SerializeDesiredState(state);
+  return neutral;
 }
 
 QString FormatControllerState(const Movie::ControllerState& state)
@@ -174,10 +231,6 @@ QString FormatControllerState(const Movie::ControllerState& state)
     parts << QStringLiteral("Y");
   if (state.Z)
     parts << QStringLiteral("Z");
-  if (state.L)
-    parts << QStringLiteral("L");
-  if (state.R)
-    parts << QStringLiteral("R");
   if (state.DPadUp)
     parts << QStringLiteral("Up");
   if (state.DPadDown)
@@ -190,10 +243,20 @@ QString FormatControllerState(const Movie::ControllerState& state)
     parts << QStringLiteral("Reset");
   if (state.disc)
     parts << QStringLiteral("Disc");
-  parts << QStringLiteral("LS(%1,%2)").arg(state.AnalogStickX).arg(state.AnalogStickY);
-  parts << QStringLiteral("CS(%1,%2)").arg(state.CStickX).arg(state.CStickY);
-  parts << QStringLiteral("LT%1").arg(state.TriggerL);
-  parts << QStringLiteral("RT%1").arg(state.TriggerR);
+  if (state.L || state.TriggerL > 0)
+    parts << QStringLiteral("L%1").arg(state.TriggerL);
+  if (state.R || state.TriggerR > 0)
+    parts << QStringLiteral("R%1").arg(state.TriggerR);
+  if (state.AnalogStickX != GCPadStatus::MAIN_STICK_CENTER_X ||
+      state.AnalogStickY != GCPadStatus::MAIN_STICK_CENTER_Y)
+  {
+    parts << QStringLiteral("LS(%1,%2)").arg(state.AnalogStickX).arg(state.AnalogStickY);
+  }
+  if (state.CStickX != GCPadStatus::C_STICK_CENTER_X ||
+      state.CStickY != GCPadStatus::C_STICK_CENTER_Y)
+  {
+    parts << QStringLiteral("CS(%1,%2)").arg(state.CStickX).arg(state.CStickY);
+  }
   return parts.join(QStringLiteral(" "));
 }
 
@@ -230,21 +293,46 @@ QString FormatWiiState(const Movie::WiiRuntimeInputRow& row)
   if (state.buttons.right)
     parts << QStringLiteral("Right");
 
-  parts << QStringLiteral("Accel(%1,%2,%3)")
-               .arg(state.acceleration.value.x)
-               .arg(state.acceleration.value.y)
-               .arg(state.acceleration.value.z);
+  if (state.acceleration.value.x != WiimoteEmu::DesiredWiimoteState::DEFAULT_ACCELERATION.value.x ||
+      state.acceleration.value.y != WiimoteEmu::DesiredWiimoteState::DEFAULT_ACCELERATION.value.y ||
+      state.acceleration.value.z != WiimoteEmu::DesiredWiimoteState::DEFAULT_ACCELERATION.value.z)
+  {
+    parts << QStringLiteral("Accel(%1,%2,%3)")
+                 .arg(state.acceleration.value.x)
+                 .arg(state.acceleration.value.y)
+                 .arg(state.acceleration.value.z);
+  }
+
+  QStringList ir_parts;
+  for (size_t i = 0; i < state.camera_points.size(); ++i)
+  {
+    if (!IsVisibleIRPoint(state.camera_points[i]))
+      continue;
+    ir_parts << QStringLiteral("P%1(%2,%3,%4)")
+                    .arg(i + 1)
+                    .arg(state.camera_points[i].position.x)
+                    .arg(state.camera_points[i].position.y)
+                    .arg(state.camera_points[i].size);
+  }
+  if (!ir_parts.isEmpty())
+    parts << QStringLiteral("IR[%1]").arg(ir_parts.join(QStringLiteral(" ")));
 
   if (state.motion_plus.has_value())
   {
     const auto& gyro = state.motion_plus->gyro.value;
-    parts << QStringLiteral("Gyro(%1,%2,%3)")
-                 .arg(GyroRawToTasValue(gyro.x))
-                 .arg(GyroRawToTasValue(gyro.y))
-                 .arg(GyroRawToTasValue(gyro.z));
+    if (gyro.x != WiimoteEmu::MotionPlus::ZERO_VALUE ||
+        gyro.y != WiimoteEmu::MotionPlus::ZERO_VALUE ||
+        gyro.z != WiimoteEmu::MotionPlus::ZERO_VALUE || state.motion_plus->is_slow.x ||
+        state.motion_plus->is_slow.y || state.motion_plus->is_slow.z)
+    {
+      parts << QStringLiteral("Gyro(%1,%2,%3)")
+                   .arg(GyroRawToTasValue(gyro.x))
+                   .arg(GyroRawToTasValue(gyro.y))
+                   .arg(GyroRawToTasValue(gyro.z));
+    }
   }
 
-  if (state.battery.has_value())
+  if (state.battery.has_value() && *state.battery != 100)
     parts << QStringLiteral("Bat(%1%)").arg(*state.battery);
 
   if (std::holds_alternative<WiimoteEmu::Nunchuk::DataFormat>(state.extension.data))
@@ -256,12 +344,24 @@ QString FormatWiiState(const Movie::WiiRuntimeInputRow& row)
       ext << QStringLiteral("C");
     if (buttons & WiimoteEmu::Nunchuk::BUTTON_Z)
       ext << QStringLiteral("Z");
-    ext << QStringLiteral("Stick(%1,%2)").arg(nunchuk.GetStick().value.x).arg(nunchuk.GetStick().value.y);
-    ext << QStringLiteral("NAccel(%1,%2,%3)")
-               .arg(nunchuk.GetAccel().value.x)
-               .arg(nunchuk.GetAccel().value.y)
-               .arg(nunchuk.GetAccel().value.z);
-    parts << ext.join(QStringLiteral(" "));
+    if (nunchuk.GetStick().value.x != WiimoteEmu::Nunchuk::STICK_CENTER ||
+        nunchuk.GetStick().value.y != WiimoteEmu::Nunchuk::STICK_CENTER)
+    {
+      ext << QStringLiteral("Stick(%1,%2)")
+                 .arg(nunchuk.GetStick().value.x)
+                 .arg(nunchuk.GetStick().value.y);
+    }
+    if (nunchuk.GetAccel().value.x != k_nunchuk_accel_zero ||
+        nunchuk.GetAccel().value.y != k_nunchuk_accel_zero ||
+        nunchuk.GetAccel().value.z != k_nunchuk_accel_one)
+    {
+      ext << QStringLiteral("NAccel(%1,%2,%3)")
+                 .arg(nunchuk.GetAccel().value.x)
+                 .arg(nunchuk.GetAccel().value.y)
+                 .arg(nunchuk.GetAccel().value.z);
+    }
+    if (!ext.isEmpty())
+      parts << ext.join(QStringLiteral(" "));
   }
 
   return parts.join(QStringLiteral(" "));
@@ -377,9 +477,7 @@ public:
     if (role == Qt::DisplayRole)
     {
       if (index.column() == 0)
-        return FormatGameFrame(index.row() < static_cast<int>(m_row_game_frames.size()) ?
-                                   m_row_game_frames[index.row()] :
-                                   std::optional<u64>{});
+        return QString::number(index.row());
 
       if (m_kind == ModelMovieKind::GC)
       {
@@ -411,7 +509,7 @@ public:
       return QAbstractTableModel::headerData(section, orientation, role);
 
     if (section == 0)
-      return QStringLiteral("Game Frame");
+      return QStringLiteral("Input Frame");
     if (m_kind == ModelMovieKind::GC)
     {
       int visual = 1;
@@ -453,14 +551,12 @@ public:
     m_active_gc_count = 0;
     m_gc_rows.clear();
     m_wii_rows.clear();
-    m_row_game_frames.clear();
     m_highlight_row = -1;
     endResetModel();
   }
 
   void SetGCMovieData(const std::array<bool, 4>& active_controllers,
-                      const std::vector<std::array<Movie::ControllerState, 4>>& rows,
-                      const std::vector<std::optional<u64>>& row_game_frames)
+                      const std::vector<std::array<Movie::ControllerState, 4>>& rows)
   {
     beginResetModel();
     m_kind = ModelMovieKind::GC;
@@ -473,23 +569,85 @@ public:
     }
     m_gc_rows = rows;
     m_wii_rows.clear();
-    m_row_game_frames = row_game_frames;
-    m_row_game_frames.resize(m_gc_rows.size());
     endResetModel();
   }
 
   void SetWiiMovieData(const std::array<bool, 4>& active_wiimotes,
-                       const std::vector<Movie::WiiRuntimeInputRow>& rows,
-                       const std::vector<std::optional<u64>>& row_game_frames)
+                       const std::vector<Movie::WiiRuntimeInputRow>& rows)
   {
     beginResetModel();
     m_kind = ModelMovieKind::Wii;
     m_active_wii = active_wiimotes;
     m_gc_rows.clear();
     m_wii_rows = rows;
-    m_row_game_frames = row_game_frames;
-    m_row_game_frames.resize(m_wii_rows.size());
     endResetModel();
+  }
+
+  bool HasGCLayout(const std::array<bool, 4>& active_controllers) const
+  {
+    return m_kind == ModelMovieKind::GC && m_active_gc == active_controllers;
+  }
+
+  bool HasWiiLayout(const std::array<bool, 4>& active_wiimotes) const
+  {
+    return m_kind == ModelMovieKind::Wii && m_active_wii == active_wiimotes;
+  }
+
+  void AppendGCRows(const std::vector<std::array<Movie::ControllerState, 4>>& rows)
+  {
+    const int old_count = rowCount();
+    const int new_count = static_cast<int>(rows.size());
+    if (new_count <= old_count)
+      return;
+
+    beginInsertRows({}, old_count, new_count - 1);
+    m_gc_rows.resize(rows.size());
+    std::copy(rows.begin() + old_count, rows.end(), m_gc_rows.begin() + old_count);
+    endInsertRows();
+  }
+
+  void ReplaceGCRow(int row, const std::array<Movie::ControllerState, 4>& data)
+  {
+    if (row < 0 || row >= rowCount())
+      return;
+
+    auto& existing = m_gc_rows[static_cast<size_t>(row)];
+    if (std::memcmp(&existing, &data, sizeof(existing)) == 0)
+      return;
+
+    existing = data;
+    emit dataChanged(index(row, 0), index(row, std::max(0, columnCount() - 1)));
+  }
+
+  void ReplaceWiiRow(int row, const Movie::WiiRuntimeInputRow& data)
+  {
+    if (row < 0 || row >= rowCount())
+      return;
+
+    auto& existing = m_wii_rows[static_cast<size_t>(row)];
+    if (existing.wiimote == data.wiimote && existing.is_reset == data.is_reset &&
+        existing.serialized_state.length == data.serialized_state.length &&
+        std::memcmp(existing.serialized_state.data.data(), data.serialized_state.data.data(),
+                    existing.serialized_state.data.size()) == 0)
+    {
+      return;
+    }
+
+    existing = data;
+    emit dataChanged(index(row, 0), index(row, std::max(0, columnCount() - 1)));
+  }
+
+  void AppendWiiRows(const std::vector<Movie::WiiRuntimeInputRow>& rows)
+  {
+    const int old_count = rowCount();
+    const int new_count = static_cast<int>(rows.size());
+    if (new_count <= old_count)
+      return;
+
+    beginInsertRows({}, old_count, new_count - 1);
+    m_wii_rows.resize(rows.size());
+    std::copy(rows.begin() + old_count, rows.end(), m_wii_rows.begin() + old_count);
+    endInsertRows();
   }
 
   ModelMovieKind GetKind() const { return m_kind; }
@@ -528,6 +686,11 @@ public:
     return false;
   }
 
+  bool IsGCControllerActive(int controller) const
+  {
+    return controller >= 0 && controller < 4 && m_active_gc[controller];
+  }
+
   const Movie::ControllerState& GetGCState(int row, int controller) const
   {
     return m_gc_rows.at(static_cast<size_t>(row)).at(static_cast<size_t>(controller));
@@ -552,6 +715,13 @@ public:
     emit dataChanged(idx, idx);
   }
 
+  QString GetRowGameFrameLabel(int row) const
+  {
+    if (row < 0 || row >= rowCount())
+      return {};
+    return QString::number(row);
+  }
+
 private:
   int ControllerToColumn(int controller) const
   {
@@ -573,7 +743,6 @@ private:
   int m_active_gc_count = 0;
   std::vector<std::array<Movie::ControllerState, 4>> m_gc_rows;
   std::vector<Movie::WiiRuntimeInputRow> m_wii_rows;
-  std::vector<std::optional<u64>> m_row_game_frames;
   int m_highlight_row = -1;
 };
 
@@ -581,6 +750,7 @@ DTMEditorDialog::DTMEditorDialog(QWidget* parent) : QDialog(parent)
 {
   setWindowTitle(tr("DTM Editor"));
   resize(1100, 700);
+  setAttribute(Qt::WA_QuitOnClose, false);
 
   CreateWidgets();
   Refresh();
@@ -588,7 +758,11 @@ DTMEditorDialog::DTMEditorDialog(QWidget* parent) : QDialog(parent)
   m_refresh_timer = new QTimer(this);
   m_refresh_timer->setInterval(100);
   connect(m_refresh_timer, &QTimer::timeout, this, &DTMEditorDialog::Refresh);
-  m_refresh_timer->start();
+
+  m_drag_hold_timer = new QTimer(this);
+  m_drag_hold_timer->setSingleShot(true);
+  m_drag_hold_timer->setInterval(k_drag_hold_ms);
+  connect(m_drag_hold_timer, &QTimer::timeout, this, &DTMEditorDialog::BeginPendingDrag);
 }
 
 bool DTMEditorDialog::HasMovieLoaded() const
@@ -614,20 +788,47 @@ void DTMEditorDialog::CreateWidgets()
   m_table->setAlternatingRowColors(true);
   m_table->setSortingEnabled(false);
   m_table->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
+  m_table->setMouseTracking(true);
+  m_table->setContextMenuPolicy(Qt::DefaultContextMenu);
   m_table->verticalHeader()->setDefaultSectionSize(6);
   m_table->verticalHeader()->setVisible(false);
   m_table->horizontalHeader()->setStretchLastSection(true);
   m_table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
   m_table->setStyleSheet(
       QStringLiteral("QTableView::item:selected { background-color: rgba(120, 200, 120, 96); }"));
+  m_table->viewport()->installEventFilter(this);
+  m_drag_preview = new QRubberBand(QRubberBand::Rectangle, m_table->viewport());
+  m_drag_preview->setAttribute(Qt::WA_TransparentForMouseEvents);
+  m_drag_preview->setStyleSheet(
+      QStringLiteral("border: 2px solid rgba(120, 200, 120, 220); "
+                     "background-color: rgba(120, 200, 120, 36);"));
+  m_drag_preview->hide();
   connect(m_table->selectionModel(), &QItemSelectionModel::currentRowChanged, this,
-          [this](const QModelIndex&, const QModelIndex&) { PopulateEditor(); });
+          [this](const QModelIndex&, const QModelIndex&) {
+            UpdateStatusLabel();
+            PopulateEditor();
+          });
+
+  auto* copy_action = new QAction(tr("Copy"), this);
+  copy_action->setShortcut(QKeySequence::Copy);
+  copy_action->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+  connect(copy_action, &QAction::triggered, this, &DTMEditorDialog::CopySelectedInputs);
+  m_table->addAction(copy_action);
+
+  auto* paste_action = new QAction(tr("Paste"), this);
+  paste_action->setShortcut(QKeySequence::Paste);
+  paste_action->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+  connect(paste_action, &QAction::triggered, this, [this] {
+    const QModelIndex current = m_table->currentIndex();
+    if (!current.isValid())
+      return;
+    PasteCopiedInputs(current.row());
+  });
+  m_table->addAction(paste_action);
 
   m_open_button = new QPushButton(tr("Open DTM"), this);
-  m_paste_button = new QPushButton(tr("Paste Inputs"), this);
   m_save_button = new QPushButton(tr("Save"), this);
   connect(m_open_button, &QPushButton::clicked, this, &DTMEditorDialog::PromptOpen);
-  connect(m_paste_button, &QPushButton::clicked, this, &DTMEditorDialog::PasteInputs);
   connect(m_save_button, &QPushButton::clicked, this, [this] {
     if (m_using_runtime_movie)
     {
@@ -652,7 +853,6 @@ void DTMEditorDialog::CreateWidgets()
 
   auto* button_layout = new QHBoxLayout;
   button_layout->addWidget(m_open_button);
-  button_layout->addWidget(m_paste_button);
   button_layout->addWidget(m_save_button);
   button_layout->addStretch();
 
@@ -793,6 +993,35 @@ void DTMEditorDialog::CreateWidgets()
   accel_layout->addWidget(m_wii_accel_z, 2, 1);
   wii_layout->addWidget(accel_group);
 
+  auto* ir_group = new QGroupBox(tr("IR Camera"), wii_page);
+  auto* ir_layout = new QGridLayout(ir_group);
+  ir_layout->addWidget(new QLabel(tr("Visible"), ir_group), 0, 0);
+  ir_layout->addWidget(new QLabel(tr("X"), ir_group), 0, 1);
+  ir_layout->addWidget(new QLabel(tr("Y"), ir_group), 0, 2);
+  ir_layout->addWidget(new QLabel(tr("Size"), ir_group), 0, 3);
+  for (int i = 0; i < 4; ++i)
+  {
+    m_wii_ir_visible[i] = new QCheckBox(QStringLiteral("P%1").arg(i + 1), ir_group);
+    m_wii_ir_x[i] = new QSpinBox(ir_group);
+    m_wii_ir_y[i] = new QSpinBox(ir_group);
+    m_wii_ir_size[i] = new QSpinBox(ir_group);
+    m_wii_ir_x[i]->setRange(0, 1023);
+    m_wii_ir_y[i]->setRange(0, 767);
+    m_wii_ir_size[i]->setRange(0, 15);
+    ir_layout->addWidget(m_wii_ir_visible[i], i + 1, 0);
+    ir_layout->addWidget(m_wii_ir_x[i], i + 1, 1);
+    ir_layout->addWidget(m_wii_ir_y[i], i + 1, 2);
+    ir_layout->addWidget(m_wii_ir_size[i], i + 1, 3);
+    connect(m_wii_ir_visible[i], &QCheckBox::toggled, this, [this] { ApplyEditorChanges(); });
+    connect(m_wii_ir_x[i], qOverload<int>(&QSpinBox::valueChanged), this,
+            [this] { ApplyEditorChanges(); });
+    connect(m_wii_ir_y[i], qOverload<int>(&QSpinBox::valueChanged), this,
+            [this] { ApplyEditorChanges(); });
+    connect(m_wii_ir_size[i], qOverload<int>(&QSpinBox::valueChanged), this,
+            [this] { ApplyEditorChanges(); });
+  }
+  wii_layout->addWidget(ir_group);
+
   auto* gyro_group = new QGroupBox(tr("MotionPlus Gyroscope"), wii_page);
   auto* gyro_layout = new QGridLayout(gyro_group);
   m_wii_gyro_x = new QSpinBox(gyro_group);
@@ -881,6 +1110,12 @@ void DTMEditorDialog::CreateWidgets()
 
 void DTMEditorDialog::Refresh()
 {
+  if (!isVisible())
+    return;
+
+  if (m_drag_pending || m_drag_active)
+    return;
+
   if (m_refresh_in_progress)
     return;
 
@@ -901,6 +1136,7 @@ void DTMEditorDialog::Refresh()
     m_runtime_movie_kind = EditorMovieKind::None;
     m_last_runtime_row = -1;
     m_has_last_runtime_frame = false;
+    m_last_runtime_data_generation = 0;
     if (m_file_movie_kind == EditorMovieKind::None)
       m_model->Clear();
     else
@@ -911,36 +1147,108 @@ void DTMEditorDialog::Refresh()
   PopulateEditor();
 }
 
+void DTMEditorDialog::showEvent(QShowEvent* event)
+{
+  QDialog::showEvent(event);
+  if (m_refresh_timer && !m_refresh_timer->isActive())
+    m_refresh_timer->start();
+  UpdateHotkeyFocusState();
+  Refresh();
+}
+
+void DTMEditorDialog::hideEvent(QHideEvent* event)
+{
+  ClearPendingDrag();
+  if (m_refresh_timer)
+    m_refresh_timer->stop();
+  QDialog::hideEvent(event);
+  UpdateHotkeyFocusState();
+}
+
+void DTMEditorDialog::changeEvent(QEvent* event)
+{
+  if (event->type() == QEvent::ActivationChange)
+    UpdateHotkeyFocusState();
+
+  QDialog::changeEvent(event);
+}
+
 bool DTMEditorDialog::RefreshGCRuntimeMovie()
 {
   auto& movie = Core::System::GetInstance().GetMovie();
-  const auto snapshot = movie.GetGCRuntimeFrameSnapshot();
-  if (!snapshot.has_value())
+  const auto metadata = movie.GetGCRuntimeFrameMetadata();
+  if (!metadata.has_value())
     return false;
 
   const Core::State core_state = Core::GetState(Core::System::GetInstance());
   const bool paused = core_state == Core::State::Paused;
   const bool frame_changed =
-      !m_has_last_runtime_frame || snapshot->current_frame != m_last_runtime_frame;
+      !m_has_last_runtime_frame || metadata->current_frame != m_last_runtime_frame;
   const bool keep_manual_view =
       paused && !frame_changed && isActiveWindow() && m_using_runtime_movie &&
       m_runtime_movie_kind == EditorMovieKind::GC;
   const bool should_follow = !paused || frame_changed || !isActiveWindow();
-  const std::vector<int> previously_selected_rows = GetSelectedRows();
+  const bool runtime_switched = !m_using_runtime_movie || m_runtime_movie_kind != EditorMovieKind::GC;
+  const bool data_generation_changed =
+      metadata->data_generation != m_last_runtime_data_generation;
+  const bool layout_changed = !m_model->HasGCLayout(metadata->active_controllers);
+  const bool row_count_changed =
+      metadata->row_count != static_cast<u64>(m_model->rowCount());
+  const bool live_row_changed =
+      static_cast<int>(metadata->current_input_row) != m_last_runtime_row;
+  const std::vector<int> previously_selected_rows =
+      (!keep_manual_view && !should_follow) ? GetSelectedRows() : std::vector<int>{};
   const QModelIndex current = m_table->currentIndex();
-  const int previous_column = current.isValid() ? current.column() : m_model->GetFirstGCControllerColumn();
+  const int previous_column =
+      current.isValid() ? current.column() : m_model->GetFirstGCControllerColumn();
   const int previous_row = current.isValid() ? current.row() : -1;
 
-  const auto row_game_frames = PopulateMissingGameFrames(snapshot->row_game_frames, snapshot->rows.size(),
-                                                         snapshot->current_frame,
-                                                         snapshot->current_input_row);
   if (!keep_manual_view)
-    m_model->SetGCMovieData(snapshot->active_controllers, snapshot->rows, row_game_frames);
-  m_model->SetHighlightedRow(static_cast<int>(snapshot->current_input_row));
+  {
+    if (runtime_switched || data_generation_changed || layout_changed || row_count_changed)
+    {
+      const auto snapshot = movie.GetGCRuntimeFrameSnapshot();
+      if (!snapshot.has_value())
+        return false;
+
+      if (runtime_switched || data_generation_changed || layout_changed ||
+          snapshot->rows.size() < static_cast<size_t>(m_model->rowCount()))
+      {
+        m_model->SetGCMovieData(snapshot->active_controllers, snapshot->rows);
+      }
+      else if (snapshot->rows.size() > static_cast<size_t>(m_model->rowCount()))
+      {
+        m_model->AppendGCRows(snapshot->rows);
+      }
+    }
+  }
+
+  bool refreshed_selected_editor = false;
+  if (metadata->row_count > 0 && metadata->current_input_row < metadata->row_count &&
+      metadata->current_input_row < static_cast<u64>(m_model->rowCount()))
+  {
+    const int live_data_row = static_cast<int>(metadata->current_input_row);
+    if (const auto row_data = movie.GetGCRuntimeFrameRow(metadata->current_input_row))
+    {
+      m_model->ReplaceGCRow(live_data_row, *row_data);
+      if (current.isValid() && current.row() == live_data_row)
+      {
+        PopulateEditor();
+        refreshed_selected_editor = true;
+      }
+    }
+  }
+
+  m_model->SetHighlightedRow(static_cast<int>(metadata->current_input_row));
   m_using_runtime_movie = true;
   m_runtime_movie_kind = EditorMovieKind::GC;
 
-  if (!keep_manual_view)
+  const bool selection_needs_update =
+      !keep_manual_view &&
+      (runtime_switched || data_generation_changed || layout_changed || row_count_changed ||
+       (should_follow && live_row_changed));
+
+  if (selection_needs_update)
   {
     int target_column = previous_column;
     int controller = -1;
@@ -955,12 +1263,14 @@ bool DTMEditorDialog::RefreshGCRuntimeMovie()
       if (should_follow)
       {
         const int live_row =
-            std::clamp(static_cast<int>(snapshot->current_input_row), 0, m_model->rowCount() - 1);
+            std::clamp(static_cast<int>(metadata->current_input_row), 0, m_model->rowCount() - 1);
         const QModelIndex idx = m_model->index(live_row, target_column);
         selection_model->clearSelection();
         selection_model->setCurrentIndex(idx, QItemSelectionModel::NoUpdate);
         selection_model->select(idx, QItemSelectionModel::Select | QItemSelectionModel::Rows);
-        m_table->scrollTo(idx, QAbstractItemView::PositionAtCenter);
+        const QRect visual_rect = m_table->visualRect(idx);
+        if (!m_table->viewport()->rect().contains(visual_rect.center()))
+          m_table->scrollTo(idx, QAbstractItemView::EnsureVisible);
       }
       else
       {
@@ -980,42 +1290,92 @@ bool DTMEditorDialog::RefreshGCRuntimeMovie()
     }
   }
 
-  m_last_runtime_row = static_cast<int>(snapshot->current_input_row);
-  m_last_runtime_frame = snapshot->current_frame;
+  m_last_runtime_row = static_cast<int>(metadata->current_input_row);
+  m_last_runtime_frame = metadata->current_frame;
+  m_last_runtime_data_generation = metadata->data_generation;
   m_has_last_runtime_frame = true;
-  UpdateStatusLabel();
-  PopulateEditor();
+  if (runtime_switched)
+    UpdateStatusLabel();
+  if (!refreshed_selected_editor &&
+      (selection_needs_update || runtime_switched || data_generation_changed || layout_changed))
+    PopulateEditor();
   return true;
 }
 
 bool DTMEditorDialog::RefreshWiiRuntimeMovie()
 {
   auto& movie = Core::System::GetInstance().GetMovie();
-  const auto snapshot = movie.GetWiiRuntimeFrameSnapshot();
-  if (!snapshot.has_value())
+  const auto metadata = movie.GetWiiRuntimeFrameMetadata();
+  if (!metadata.has_value())
     return false;
 
   const Core::State core_state = Core::GetState(Core::System::GetInstance());
   const bool paused = core_state == Core::State::Paused;
   const bool frame_changed =
-      !m_has_last_runtime_frame || snapshot->current_frame != m_last_runtime_frame;
+      !m_has_last_runtime_frame || metadata->current_frame != m_last_runtime_frame;
   const bool keep_manual_view =
       paused && !frame_changed && isActiveWindow() && m_using_runtime_movie &&
       m_runtime_movie_kind == EditorMovieKind::Wii;
   const bool should_follow = !paused || frame_changed || !isActiveWindow();
-  const std::vector<int> previously_selected_rows = GetSelectedRows();
+  const bool runtime_switched =
+      !m_using_runtime_movie || m_runtime_movie_kind != EditorMovieKind::Wii;
+  const bool data_generation_changed =
+      metadata->data_generation != m_last_runtime_data_generation;
+  const bool layout_changed = !m_model->HasWiiLayout(metadata->active_wiimotes);
+  const bool row_count_changed =
+      metadata->row_count != static_cast<u64>(m_model->rowCount());
+  const bool live_row_changed =
+      static_cast<int>(metadata->current_input_row) != m_last_runtime_row;
+  const std::vector<int> previously_selected_rows =
+      (!keep_manual_view && !should_follow) ? GetSelectedRows() : std::vector<int>{};
   const QModelIndex current = m_table->currentIndex();
   const int previous_row = current.isValid() ? current.row() : -1;
-  const auto row_game_frames = PopulateMissingGameFrames(snapshot->row_game_frames, snapshot->rows.size(),
-                                                         snapshot->current_frame,
-                                                         snapshot->current_input_row);
   if (!keep_manual_view)
-    m_model->SetWiiMovieData(snapshot->active_wiimotes, snapshot->rows, row_game_frames);
-  m_model->SetHighlightedRow(static_cast<int>(snapshot->current_input_row));
+  {
+    if (runtime_switched || data_generation_changed || layout_changed || row_count_changed)
+    {
+      const auto snapshot = movie.GetWiiRuntimeFrameSnapshot();
+      if (!snapshot.has_value())
+        return false;
+
+      if (runtime_switched || data_generation_changed || layout_changed ||
+          snapshot->rows.size() < static_cast<size_t>(m_model->rowCount()))
+      {
+        m_model->SetWiiMovieData(snapshot->active_wiimotes, snapshot->rows);
+      }
+      else if (snapshot->rows.size() > static_cast<size_t>(m_model->rowCount()))
+      {
+        m_model->AppendWiiRows(snapshot->rows);
+      }
+    }
+  }
+
+  bool refreshed_selected_editor = false;
+  if (metadata->row_count > 0 && metadata->current_input_row < metadata->row_count &&
+      metadata->current_input_row < static_cast<u64>(m_model->rowCount()))
+  {
+    const int live_data_row = static_cast<int>(metadata->current_input_row);
+    if (const auto row_data = movie.GetWiiRuntimeFrameRow(metadata->current_input_row))
+    {
+      m_model->ReplaceWiiRow(live_data_row, *row_data);
+      if (current.isValid() && current.row() == live_data_row)
+      {
+        PopulateEditor();
+        refreshed_selected_editor = true;
+      }
+    }
+  }
+
+  m_model->SetHighlightedRow(static_cast<int>(metadata->current_input_row));
   m_using_runtime_movie = true;
   m_runtime_movie_kind = EditorMovieKind::Wii;
 
-  if (!keep_manual_view && m_model->rowCount() > 0)
+  const bool selection_needs_update =
+      !keep_manual_view &&
+      (runtime_switched || data_generation_changed || layout_changed || row_count_changed ||
+       (should_follow && live_row_changed));
+
+  if (selection_needs_update && m_model->rowCount() > 0)
   {
     QItemSelectionModel* selection_model = m_table->selectionModel();
     QSignalBlocker blocker(selection_model);
@@ -1023,12 +1383,14 @@ bool DTMEditorDialog::RefreshWiiRuntimeMovie()
     if (should_follow)
     {
       const int live_row =
-          std::clamp(static_cast<int>(snapshot->current_input_row), 0, m_model->rowCount() - 1);
+          std::clamp(static_cast<int>(metadata->current_input_row), 0, m_model->rowCount() - 1);
       const QModelIndex idx = m_model->index(live_row, 1);
       selection_model->clearSelection();
       selection_model->setCurrentIndex(idx, QItemSelectionModel::NoUpdate);
       selection_model->select(idx, QItemSelectionModel::Select | QItemSelectionModel::Rows);
-      m_table->scrollTo(idx, QAbstractItemView::PositionAtCenter);
+      const QRect visual_rect = m_table->visualRect(idx);
+      if (!m_table->viewport()->rect().contains(visual_rect.center()))
+        m_table->scrollTo(idx, QAbstractItemView::EnsureVisible);
     }
     else
     {
@@ -1046,11 +1408,15 @@ bool DTMEditorDialog::RefreshWiiRuntimeMovie()
     }
   }
 
-  m_last_runtime_row = static_cast<int>(snapshot->current_input_row);
-  m_last_runtime_frame = snapshot->current_frame;
+  m_last_runtime_row = static_cast<int>(metadata->current_input_row);
+  m_last_runtime_frame = metadata->current_frame;
+  m_last_runtime_data_generation = metadata->data_generation;
   m_has_last_runtime_frame = true;
-  UpdateStatusLabel();
-  PopulateEditor();
+  if (runtime_switched)
+    UpdateStatusLabel();
+  if (!refreshed_selected_editor &&
+      (selection_needs_update || runtime_switched || data_generation_changed || layout_changed))
+    PopulateEditor();
   return true;
 }
 
@@ -1100,6 +1466,7 @@ void DTMEditorDialog::PopulateGCEditor(int row, int controller)
 {
   m_updating_editor = true;
   const auto& state = m_model->GetGCState(row, controller);
+  const QString game_frame_label = m_model->GetRowGameFrameLabel(row);
   m_connected->setChecked(state.is_connected);
   m_start->setChecked(state.Start);
   m_a->setChecked(state.A);
@@ -1125,7 +1492,9 @@ void DTMEditorDialog::PopulateGCEditor(int row, int controller)
   m_updating_editor = false;
 
   m_editor_stack->setCurrentIndex(k_gc_page);
-  m_editor_box->setTitle(tr("GameCube Frame %1, Port %2").arg(row).arg(controller + 1));
+  m_editor_box->setTitle(!game_frame_label.isEmpty() ?
+                             tr("GameCube Input Frame %1, Port %2").arg(game_frame_label).arg(controller + 1) :
+                             tr("GameCube Input Row %1, Port %2").arg(row).arg(controller + 1));
   SetEditorEnabled(true);
 }
 
@@ -1133,6 +1502,7 @@ void DTMEditorDialog::PopulateWiiEditor(int row)
 {
   m_current_wii_row = m_model->GetWiiRow(row);
   m_current_wii_state_valid = false;
+  const QString game_frame_label = m_model->GetRowGameFrameLabel(row);
 
   m_editor_stack->setCurrentIndex(k_wii_page);
   m_updating_editor = true;
@@ -1213,6 +1583,13 @@ void DTMEditorDialog::PopulateWiiEditor(int row)
     m_wii_accel_y->setValue(m_current_wii_state.acceleration.value.y);
     m_wii_accel_z->setValue(m_current_wii_state.acceleration.value.z);
     m_wii_battery->setValue(m_current_wii_state.battery.value_or(100));
+    for (size_t i = 0; i < m_wii_ir_visible.size(); ++i)
+    {
+      m_wii_ir_visible[i]->setChecked(false);
+      m_wii_ir_x[i]->setValue(0);
+      m_wii_ir_y[i]->setValue(0);
+      m_wii_ir_size[i]->setValue(0);
+    }
     m_wii_gyro_x->setValue(k_gyro_center);
     m_wii_gyro_y->setValue(k_gyro_center);
     m_wii_gyro_z->setValue(k_gyro_center);
@@ -1247,7 +1624,9 @@ void DTMEditorDialog::PopulateWiiEditor(int row)
     {
       widget->setEnabled(has_nunchuk);
     }
-    m_editor_box->setTitle(tr("Wii Frame %1 (Reset Marker)").arg(row));
+    m_editor_box->setTitle(!game_frame_label.isEmpty() ?
+                               tr("Wii Input Frame %1 (Reset Marker)").arg(game_frame_label) :
+                               tr("Wii Input Row %1 (Reset Marker)").arg(row));
     SetEditorEnabled(true);
     return;
   }
@@ -1257,7 +1636,9 @@ void DTMEditorDialog::PopulateWiiEditor(int row)
     m_wii_extension_label->setText(tr("Invalid"));
     m_wii_motion_plus_label->setText(tr("Invalid"));
     m_updating_editor = false;
-    m_editor_box->setTitle(tr("Wii Frame %1 (Invalid)").arg(row));
+    m_editor_box->setTitle(!game_frame_label.isEmpty() ?
+                               tr("Wii Input Frame %1 (Invalid)").arg(game_frame_label) :
+                               tr("Wii Input Row %1 (Invalid)").arg(row));
     SetEditorEnabled(false);
     return;
   }
@@ -1284,6 +1665,15 @@ void DTMEditorDialog::PopulateWiiEditor(int row)
   m_wii_accel_y->setValue(m_current_wii_state.acceleration.value.y);
   m_wii_accel_z->setValue(m_current_wii_state.acceleration.value.z);
   m_wii_battery->setValue(m_current_wii_state.battery.value_or(100));
+  for (size_t i = 0; i < m_wii_ir_visible.size(); ++i)
+  {
+    const auto& point = m_current_wii_state.camera_points[i];
+    const bool visible = IsVisibleIRPoint(point);
+    m_wii_ir_visible[i]->setChecked(visible);
+    m_wii_ir_x[i]->setValue(visible ? point.position.x : 0);
+    m_wii_ir_y[i]->setValue(visible ? point.position.y : 0);
+    m_wii_ir_size[i]->setValue(visible ? point.size : 0);
+  }
 
   if (has_motion_plus)
   {
@@ -1344,7 +1734,8 @@ void DTMEditorDialog::PopulateWiiEditor(int row)
     widget->setEnabled(has_nunchuk);
   }
 
-  m_editor_box->setTitle(tr("Wii Frame %1").arg(row));
+  m_editor_box->setTitle(!game_frame_label.isEmpty() ? tr("Wii Input Frame %1").arg(game_frame_label) :
+                                                    tr("Wii Input Row %1").arg(row));
   SetEditorEnabled(true);
 }
 
@@ -1365,6 +1756,590 @@ std::vector<int> DTMEditorDialog::GetSelectedRows() const
   std::sort(rows.begin(), rows.end());
   rows.erase(std::unique(rows.begin(), rows.end()), rows.end());
   return rows;
+}
+
+int DTMEditorDialog::GetPrimaryDataColumn() const
+{
+  return m_model->GetKind() == ModelMovieKind::Wii ? 1 :
+         std::max(1, m_model->GetFirstGCControllerColumn());
+}
+
+bool DTMEditorDialog::HasCopiedInputs() const
+{
+  return (m_copied_movie_kind == EditorMovieKind::GC && !m_copied_gc_rows.empty()) ||
+         (m_copied_movie_kind == EditorMovieKind::Wii && !m_copied_wii_rows.empty());
+}
+
+bool DTMEditorDialog::HasCompatibleCopiedInputs() const
+{
+  if (!HasCopiedInputs())
+    return false;
+
+  return (m_copied_movie_kind == EditorMovieKind::GC && m_model->GetKind() == ModelMovieKind::GC) ||
+         (m_copied_movie_kind == EditorMovieKind::Wii && m_model->GetKind() == ModelMovieKind::Wii);
+}
+
+void DTMEditorDialog::SelectRows(const std::vector<int>& rows, int current_row)
+{
+  if (!m_table || !m_model || m_model->rowCount() == 0)
+    return;
+
+  std::vector<int> valid_rows = rows;
+  valid_rows.erase(std::remove_if(valid_rows.begin(), valid_rows.end(), [this](int row) {
+                   return row < 0 || row >= m_model->rowCount();
+                 }),
+                 valid_rows.end());
+  std::sort(valid_rows.begin(), valid_rows.end());
+  valid_rows.erase(std::unique(valid_rows.begin(), valid_rows.end()), valid_rows.end());
+
+  if (valid_rows.empty())
+    return;
+
+  const int current = std::clamp(current_row >= 0 ? current_row : valid_rows.front(), 0,
+                                 m_model->rowCount() - 1);
+  if (QItemSelectionModel* selection_model = m_table->selectionModel())
+  {
+    QSignalBlocker blocker(selection_model);
+    selection_model->clearSelection();
+    for (const int row : valid_rows)
+    {
+      selection_model->select(m_model->index(row, 0),
+                              QItemSelectionModel::Select | QItemSelectionModel::Rows);
+    }
+    selection_model->setCurrentIndex(m_model->index(current, GetPrimaryDataColumn()),
+                                     QItemSelectionModel::NoUpdate);
+  }
+
+  m_table->setFocus(Qt::OtherFocusReason);
+  m_table->scrollTo(m_model->index(current, GetPrimaryDataColumn()), QAbstractItemView::EnsureVisible);
+  m_table->viewport()->update();
+  m_table->update();
+}
+
+void DTMEditorDialog::RefreshEditedRows(const std::vector<int>& rows)
+{
+  if (!m_table || !m_model)
+    return;
+
+  std::vector<int> valid_rows = rows;
+  valid_rows.erase(std::remove_if(valid_rows.begin(), valid_rows.end(), [this](const int row) {
+                     return row < 0 || row >= m_model->rowCount();
+                   }),
+                   valid_rows.end());
+  std::sort(valid_rows.begin(), valid_rows.end());
+  valid_rows.erase(std::unique(valid_rows.begin(), valid_rows.end()), valid_rows.end());
+
+  if (!m_using_runtime_movie || valid_rows.empty())
+  {
+    m_table->viewport()->update();
+    m_table->update();
+    return;
+  }
+
+  auto& movie = Core::System::GetInstance().GetMovie();
+  if (m_runtime_movie_kind == EditorMovieKind::GC && m_model->GetKind() == ModelMovieKind::GC)
+  {
+    for (const int row : valid_rows)
+    {
+      if (const auto row_data = movie.GetGCRuntimeFrameRow(static_cast<u64>(row)))
+        m_model->ReplaceGCRow(row, *row_data);
+    }
+
+    if (const auto metadata = movie.GetGCRuntimeFrameMetadata())
+    {
+      m_model->SetHighlightedRow(static_cast<int>(metadata->current_input_row));
+      m_last_runtime_row = static_cast<int>(metadata->current_input_row);
+      m_last_runtime_frame = metadata->current_frame;
+      m_last_runtime_data_generation = metadata->data_generation;
+      m_has_last_runtime_frame = true;
+    }
+  }
+  else if (m_runtime_movie_kind == EditorMovieKind::Wii && m_model->GetKind() == ModelMovieKind::Wii)
+  {
+    const int current_row = m_table->currentIndex().isValid() ? m_table->currentIndex().row() : -1;
+    for (const int row : valid_rows)
+    {
+      if (const auto row_data = movie.GetWiiRuntimeFrameRow(static_cast<u64>(row)))
+      {
+        m_model->ReplaceWiiRow(row, *row_data);
+        if (row == current_row)
+          m_current_wii_row = *row_data;
+      }
+    }
+
+    if (const auto metadata = movie.GetWiiRuntimeFrameMetadata())
+    {
+      m_model->SetHighlightedRow(static_cast<int>(metadata->current_input_row));
+      m_last_runtime_row = static_cast<int>(metadata->current_input_row);
+      m_last_runtime_frame = metadata->current_frame;
+      m_last_runtime_data_generation = metadata->data_generation;
+      m_has_last_runtime_frame = true;
+    }
+  }
+
+  m_table->viewport()->update();
+  m_table->update();
+}
+
+void DTMEditorDialog::CopySelectedInputs()
+{
+  const std::vector<int> rows = GetSelectedRows();
+  if (rows.empty())
+    return;
+
+  if (m_model->GetKind() == ModelMovieKind::GC)
+  {
+    m_copied_gc_rows.clear();
+    m_copied_gc_rows.reserve(rows.size());
+    for (const int row : rows)
+    {
+      std::array<Movie::ControllerState, 4> copied_row{};
+      for (int controller = 0; controller < 4; ++controller)
+        copied_row[static_cast<size_t>(controller)] = m_model->GetGCState(row, controller);
+      m_copied_gc_rows.push_back(copied_row);
+    }
+    m_copied_wii_rows.clear();
+    m_copied_movie_kind = EditorMovieKind::GC;
+  }
+  else if (m_model->GetKind() == ModelMovieKind::Wii)
+  {
+    m_copied_wii_rows.clear();
+    m_copied_wii_rows.reserve(rows.size());
+    for (const int row : rows)
+      m_copied_wii_rows.push_back(m_model->GetWiiRow(row));
+    m_copied_gc_rows.clear();
+    m_copied_movie_kind = EditorMovieKind::Wii;
+  }
+  else
+  {
+    return;
+  }
+
+  UpdateStatusLabel();
+}
+
+bool DTMEditorDialog::PasteCopiedInputs(int start_row)
+{
+  if (!HasCompatibleCopiedInputs() || start_row < 0 || start_row >= m_model->rowCount())
+    return false;
+
+  auto& movie = Core::System::GetInstance().GetMovie();
+  std::vector<int> pasted_rows;
+  if (m_model->GetKind() == ModelMovieKind::GC)
+  {
+    const int rows_to_paste =
+        std::min(static_cast<int>(m_copied_gc_rows.size()), m_model->rowCount() - start_row);
+    for (int i = 0; i < rows_to_paste; ++i)
+    {
+      const int row = start_row + i;
+      const auto& copied_row = m_copied_gc_rows[static_cast<size_t>(i)];
+      for (int controller = 0; controller < 4; ++controller)
+      {
+        if (!m_model->IsGCControllerActive(controller))
+          continue;
+
+        if (m_using_runtime_movie && m_runtime_movie_kind == EditorMovieKind::GC &&
+            !movie.SetGCRuntimeFrameState(row, controller, copied_row[static_cast<size_t>(controller)]))
+        {
+          continue;
+        }
+
+        m_model->SetGCState(row, controller, copied_row[static_cast<size_t>(controller)]);
+      }
+      pasted_rows.push_back(row);
+    }
+  }
+  else if (m_model->GetKind() == ModelMovieKind::Wii)
+  {
+    const int rows_to_paste =
+        std::min(static_cast<int>(m_copied_wii_rows.size()), m_model->rowCount() - start_row);
+    for (int i = 0; i < rows_to_paste; ++i)
+    {
+      const int row = start_row + i;
+      const auto& copied_row = m_copied_wii_rows[static_cast<size_t>(i)];
+      if (m_using_runtime_movie && m_runtime_movie_kind == EditorMovieKind::Wii &&
+          !movie.SetWiiRuntimeFrameState(
+              row, copied_row.is_reset ? WiimoteEmu::SerializedWiimoteState{} :
+                                         copied_row.serialized_state))
+      {
+        continue;
+      }
+
+      m_model->SetWiiRow(row, copied_row);
+      if (row == m_table->currentIndex().row())
+        m_current_wii_row = copied_row;
+      pasted_rows.push_back(row);
+    }
+  }
+  else
+  {
+    return false;
+  }
+
+  if (pasted_rows.empty())
+    return false;
+
+  m_dirty = !m_using_runtime_movie;
+  SelectRows(pasted_rows, pasted_rows.front());
+  RefreshEditedRows(pasted_rows);
+  UpdateStatusLabel();
+  PopulateEditor();
+  return true;
+}
+
+void DTMEditorDialog::ShowTableContextMenu(const QPoint& pos)
+{
+  QMenu menu(this);
+  QAction* copy_action = menu.addAction(tr("Copy"));
+  QAction* paste_action = menu.addAction(tr("Paste"));
+  copy_action->setEnabled(!GetSelectedRows().empty());
+  paste_action->setEnabled(HasCompatibleCopiedInputs() && m_table->currentIndex().isValid());
+
+  QAction* chosen = menu.exec(m_table->viewport()->mapToGlobal(pos));
+  if (chosen == copy_action)
+    CopySelectedInputs();
+  else if (chosen == paste_action)
+    PasteCopiedInputs(m_table->currentIndex().row());
+}
+
+void DTMEditorDialog::UpdateHotkeyFocusState()
+{
+  const bool active = isVisible() && qobject_cast<DTMEditorDialog*>(QApplication::activeWindow()) == this;
+  Host::GetInstance()->SetTASInputFocus(active);
+  HotkeyManagerEmu::SetStateHotkeysBlocked(active);
+}
+
+void DTMEditorDialog::ClearPendingDrag()
+{
+  if (m_drag_hold_timer)
+    m_drag_hold_timer->stop();
+
+  m_drag_pending = false;
+  m_drag_active = false;
+  m_drag_rows.clear();
+  m_drag_press_row = -1;
+  m_drag_hover_row = -1;
+  if (m_drag_preview)
+    m_drag_preview->hide();
+  m_table->viewport()->unsetCursor();
+  m_table->unsetCursor();
+}
+
+void DTMEditorDialog::BeginPendingDrag()
+{
+  if (!m_drag_pending || m_drag_rows.empty() || !(QApplication::mouseButtons() & Qt::LeftButton))
+    return;
+
+  m_drag_active = true;
+  const QPoint viewport_pos = m_table->viewport()->mapFromGlobal(QCursor::pos());
+  const int row = m_table->rowAt(viewport_pos.y());
+  if (row >= 0)
+    m_drag_hover_row = row;
+  m_table->viewport()->setCursor(Qt::ClosedHandCursor);
+  m_table->setCursor(Qt::ClosedHandCursor);
+  UpdateDragPreview();
+}
+
+void DTMEditorDialog::FinishPendingDrag(const bool apply_drag)
+{
+  const std::vector<int> dragged_rows = m_drag_rows;
+  const int hover_row = m_drag_hover_row;
+  ClearPendingDrag();
+
+  if (!apply_drag || dragged_rows.empty() || hover_row < 0)
+    return;
+
+  MoveSelectedInputs(dragged_rows, hover_row);
+}
+
+void DTMEditorDialog::UpdateDragPreview()
+{
+  if (!m_drag_preview || !m_drag_active || !m_model || m_model->rowCount() == 0 || m_drag_rows.empty())
+  {
+    if (m_drag_preview)
+      m_drag_preview->hide();
+    return;
+  }
+
+  std::vector<int> rows = m_drag_rows;
+  rows.erase(std::remove_if(rows.begin(), rows.end(), [this](const int row) {
+               return row < 0 || row >= m_model->rowCount();
+             }),
+             rows.end());
+  std::sort(rows.begin(), rows.end());
+  rows.erase(std::unique(rows.begin(), rows.end()), rows.end());
+  if (rows.empty() || m_drag_hover_row < 0)
+  {
+    m_drag_preview->hide();
+    return;
+  }
+
+  const int pivot_row = rows.front();
+  const int max_offset = rows.back() - pivot_row;
+  const int start_row =
+      std::clamp(m_drag_hover_row, 0, std::max(0, m_model->rowCount() - 1 - max_offset));
+  const int end_row = std::min(m_model->rowCount() - 1, start_row + max_offset);
+
+  const QModelIndex top_index = m_model->index(start_row, 0);
+  const QModelIndex bottom_index =
+      m_model->index(end_row, std::max(0, m_model->columnCount() - 1));
+  const QRect top_rect = m_table->visualRect(top_index);
+  const QRect bottom_rect = m_table->visualRect(bottom_index);
+  QRect preview_rect = top_rect.united(bottom_rect);
+  if (!preview_rect.isValid() || preview_rect.height() <= 0)
+  {
+    m_drag_preview->hide();
+    return;
+  }
+
+  preview_rect.setLeft(0);
+  preview_rect.setRight(std::max(0, m_table->viewport()->width() - 1));
+  preview_rect.adjust(0, 0, -1, -1);
+  m_drag_preview->setGeometry(preview_rect);
+  m_drag_preview->raise();
+  m_drag_preview->show();
+}
+
+bool DTMEditorDialog::eventFilter(QObject* watched, QEvent* event)
+{
+  if (watched == m_table->viewport())
+  {
+    switch (event->type())
+    {
+    case QEvent::MouseButtonPress:
+    {
+      auto* mouse_event = static_cast<QMouseEvent*>(event);
+      if (mouse_event->button() == Qt::RightButton)
+      {
+        ClearPendingDrag();
+
+        const int row = m_table->rowAt(static_cast<int>(mouse_event->position().y()));
+        if (row >= 0)
+        {
+          const std::vector<int> selected_rows = GetSelectedRows();
+          const bool row_selected =
+              std::binary_search(selected_rows.begin(), selected_rows.end(), row);
+          if (QItemSelectionModel* selection_model = m_table->selectionModel())
+          {
+            QSignalBlocker blocker(selection_model);
+            if (!row_selected)
+            {
+              selection_model->clearSelection();
+              selection_model->select(m_model->index(row, 0),
+                                      QItemSelectionModel::Select | QItemSelectionModel::Rows);
+            }
+            selection_model->setCurrentIndex(m_model->index(row, GetPrimaryDataColumn()),
+                                             QItemSelectionModel::NoUpdate);
+          }
+        }
+        break;
+      }
+
+      if (mouse_event->button() != Qt::LeftButton || mouse_event->modifiers() != Qt::NoModifier)
+        break;
+
+      const int row = m_table->rowAt(static_cast<int>(mouse_event->position().y()));
+      if (row < 0)
+        break;
+
+      const std::vector<int> selected_rows = GetSelectedRows();
+      if (selected_rows.empty() || !std::binary_search(selected_rows.begin(), selected_rows.end(), row))
+        break;
+
+      m_drag_rows = selected_rows;
+      m_drag_press_row = row;
+      m_drag_hover_row = row;
+      m_drag_pending = true;
+      m_drag_active = false;
+      m_drag_hold_timer->start();
+      return true;
+    }
+    case QEvent::MouseMove:
+    {
+      if (!m_drag_pending)
+        break;
+
+      auto* mouse_event = static_cast<QMouseEvent*>(event);
+      const int row = m_table->rowAt(static_cast<int>(mouse_event->position().y()));
+      if (row >= 0)
+      {
+        m_drag_hover_row = row;
+        if (m_drag_active)
+        {
+          m_table->scrollTo(m_model->index(row, 0), QAbstractItemView::EnsureVisible);
+          UpdateDragPreview();
+        }
+      }
+      return m_drag_active;
+    }
+    case QEvent::ContextMenu:
+    {
+      auto* context_event = static_cast<QContextMenuEvent*>(event);
+      ShowTableContextMenu(context_event->pos());
+      return true;
+    }
+    case QEvent::MouseButtonRelease:
+    {
+      auto* mouse_event = static_cast<QMouseEvent*>(event);
+      if (!m_drag_pending || mouse_event->button() != Qt::LeftButton)
+        break;
+
+      if (!m_drag_active && m_drag_press_row >= 0)
+      {
+        if (QItemSelectionModel* selection_model = m_table->selectionModel())
+        {
+          selection_model->setCurrentIndex(m_model->index(m_drag_press_row, GetPrimaryDataColumn()),
+                                           QItemSelectionModel::NoUpdate);
+        }
+      }
+
+      FinishPendingDrag(m_drag_active);
+      return true;
+    }
+    default:
+      break;
+    }
+  }
+
+  return QDialog::eventFilter(watched, event);
+}
+
+bool DTMEditorDialog::MoveSelectedInputs(const std::vector<int>& selected_rows, int dest_start)
+{
+  if (selected_rows.empty() || m_model->GetKind() == ModelMovieKind::None)
+    return false;
+
+  std::vector<int> rows = selected_rows;
+  rows.erase(std::remove_if(rows.begin(), rows.end(), [this](int row) {
+               return row < 0 || row >= m_model->rowCount();
+             }),
+             rows.end());
+  std::sort(rows.begin(), rows.end());
+  rows.erase(std::unique(rows.begin(), rows.end()), rows.end());
+  if (rows.empty())
+    return false;
+
+  const int row_count = m_model->rowCount();
+  const int pivot_row = rows.front();
+  const int max_offset = rows.back() - pivot_row;
+  const int clamped_dest_start = std::clamp(dest_start, 0, std::max(0, row_count - 1 - max_offset));
+
+  std::vector<int> dest_rows;
+  dest_rows.reserve(rows.size());
+  for (const int row : rows)
+    dest_rows.push_back(clamped_dest_start + (row - pivot_row));
+
+  if (rows == dest_rows)
+  {
+    SelectRows(dest_rows, clamped_dest_start);
+    return true;
+  }
+
+  std::vector<int> changed_rows = rows;
+  changed_rows.insert(changed_rows.end(), dest_rows.begin(), dest_rows.end());
+  std::sort(changed_rows.begin(), changed_rows.end());
+  changed_rows.erase(std::unique(changed_rows.begin(), changed_rows.end()), changed_rows.end());
+
+  const auto changed_index = [&changed_rows](const int row) {
+    return static_cast<size_t>(
+        std::lower_bound(changed_rows.begin(), changed_rows.end(), row) - changed_rows.begin());
+  };
+  const auto is_dest_row = [&dest_rows](const int row) {
+    return std::binary_search(dest_rows.begin(), dest_rows.end(), row);
+  };
+
+  auto& movie = Core::System::GetInstance().GetMovie();
+  if (m_model->GetKind() == ModelMovieKind::GC)
+  {
+    // Only materialize rows that actually change, large DTMs should not copy the whole movie.
+    std::vector<std::array<Movie::ControllerState, 4>> original;
+    original.reserve(changed_rows.size());
+    for (const int row : changed_rows)
+    {
+      std::array<Movie::ControllerState, 4> row_data{};
+      for (int controller = 0; controller < 4; ++controller)
+        row_data[static_cast<size_t>(controller)] = m_model->GetGCState(row, controller);
+      original.push_back(row_data);
+    }
+    auto updated = original;
+
+    for (const int row : rows)
+    {
+      if (is_dest_row(row))
+        continue;
+
+      auto& updated_row = updated[changed_index(row)];
+      for (int controller = 0; controller < 4; ++controller)
+      {
+        updated_row[static_cast<size_t>(controller)] =
+            MakeNeutralGCStateLike(original[changed_index(row)][static_cast<size_t>(controller)]);
+      }
+    }
+
+    for (size_t i = 0; i < rows.size(); ++i)
+      updated[changed_index(dest_rows[i])] = original[changed_index(rows[i])];
+
+    for (size_t i = 0; i < changed_rows.size(); ++i)
+    {
+      const int row = changed_rows[i];
+      for (int controller = 0; controller < 4; ++controller)
+      {
+        if (!m_model->IsGCControllerActive(controller))
+          continue;
+
+        if (m_using_runtime_movie && m_runtime_movie_kind == EditorMovieKind::GC &&
+            !movie.SetGCRuntimeFrameState(row, controller,
+                                          updated[i][static_cast<size_t>(controller)]))
+        {
+          continue;
+        }
+
+        m_model->SetGCState(row, controller, updated[i][static_cast<size_t>(controller)]);
+      }
+    }
+  }
+  else if (m_model->GetKind() == ModelMovieKind::Wii)
+  {
+    std::vector<Movie::WiiRuntimeInputRow> original;
+    original.reserve(changed_rows.size());
+    for (const int row : changed_rows)
+      original.push_back(m_model->GetWiiRow(row));
+    auto updated = original;
+
+    for (const int row : rows)
+    {
+      if (is_dest_row(row))
+        continue;
+      updated[changed_index(row)] = MakeNeutralWiiRowLike(original[changed_index(row)]);
+    }
+
+    for (size_t i = 0; i < rows.size(); ++i)
+      updated[changed_index(dest_rows[i])] = original[changed_index(rows[i])];
+
+    for (size_t i = 0; i < changed_rows.size(); ++i)
+    {
+      const int row = changed_rows[i];
+      if (m_using_runtime_movie && m_runtime_movie_kind == EditorMovieKind::Wii &&
+          !movie.SetWiiRuntimeFrameState(row, updated[i].is_reset ? WiimoteEmu::SerializedWiimoteState{} :
+                                                              updated[i].serialized_state))
+      {
+        continue;
+      }
+
+      m_model->SetWiiRow(row, updated[i]);
+    }
+  }
+  else
+  {
+    return false;
+  }
+
+  m_dirty = !m_using_runtime_movie;
+  SelectRows(dest_rows, clamped_dest_start);
+  RefreshEditedRows(changed_rows);
+  UpdateStatusLabel();
+  PopulateEditor();
+  return true;
 }
 
 void DTMEditorDialog::ApplyGCEditorChange(Movie::ControllerState* state, const QObject* source) const
@@ -1480,9 +2455,36 @@ void DTMEditorDialog::ApplyWiiEditorChange(Movie::WiiRuntimeInputRow* row, const
     state.acceleration.value.z = static_cast<u16>(m_wii_accel_z->value());
   else if (source == m_wii_battery)
     state.battery = static_cast<u8>(m_wii_battery->value());
-  else if (state.motion_plus.has_value() &&
-           (source == m_wii_gyro_x || source == m_wii_gyro_y || source == m_wii_gyro_z ||
-            source == m_wii_gyro_slow_x || source == m_wii_gyro_slow_y || source == m_wii_gyro_slow_z))
+  else
+  {
+    for (size_t i = 0; i < m_wii_ir_visible.size(); ++i)
+    {
+      if (source != m_wii_ir_visible[i] && source != m_wii_ir_x[i] && source != m_wii_ir_y[i] &&
+          source != m_wii_ir_size[i])
+      {
+        continue;
+      }
+
+      if (m_wii_ir_visible[i]->isChecked())
+      {
+        state.camera_points[i] =
+            WiimoteEmu::CameraPoint({static_cast<u16>(m_wii_ir_x[i]->value()),
+                                     static_cast<u16>(m_wii_ir_y[i]->value())},
+                                    static_cast<u8>(m_wii_ir_size[i]->value()));
+      }
+      else
+      {
+        state.camera_points[i] = WiimoteEmu::CameraPoint();
+      }
+
+      row->serialized_state = WiimoteEmu::SerializeDesiredState(state);
+      return;
+    }
+  }
+
+  if (state.motion_plus.has_value() &&
+      (source == m_wii_gyro_x || source == m_wii_gyro_y || source == m_wii_gyro_z ||
+       source == m_wii_gyro_slow_x || source == m_wii_gyro_slow_y || source == m_wii_gyro_slow_z))
   {
     state.motion_plus = WiimoteEmu::MotionPlus::DataFormat::Data{
         WiimoteEmu::MotionPlus::DataFormat::GyroRawValue{
@@ -1660,6 +2662,20 @@ WiimoteEmu::SerializedWiimoteState DTMEditorDialog::BuildWiiSerializedStateFromE
   state.acceleration.value.y = static_cast<u16>(m_wii_accel_y->value());
   state.acceleration.value.z = static_cast<u16>(m_wii_accel_z->value());
   state.battery = static_cast<u8>(m_wii_battery->value());
+  for (size_t i = 0; i < m_wii_ir_visible.size(); ++i)
+  {
+    if (m_wii_ir_visible[i]->isChecked())
+    {
+      state.camera_points[i] =
+          WiimoteEmu::CameraPoint({static_cast<u16>(m_wii_ir_x[i]->value()),
+                                   static_cast<u16>(m_wii_ir_y[i]->value())},
+                                  static_cast<u8>(m_wii_ir_size[i]->value()));
+    }
+    else
+    {
+      state.camera_points[i] = WiimoteEmu::CameraPoint();
+    }
+  }
 
   if (state.motion_plus.has_value())
   {
@@ -1711,10 +2727,7 @@ bool DTMEditorDialog::LoadFile(const QString& path)
     m_file_movie_kind = EditorMovieKind::GC;
     m_using_runtime_movie = false;
     m_runtime_movie_kind = EditorMovieKind::None;
-    std::vector<std::optional<u64>> row_game_frames(gc->rows.size());
-    for (size_t i = 0; i < row_game_frames.size(); ++i)
-      row_game_frames[i] = static_cast<u64>(i);
-    m_model->SetGCMovieData(gc->active_controllers, gc->rows, row_game_frames);
+    m_model->SetGCMovieData(gc->active_controllers, gc->rows);
     m_model->SetHighlightedRow(-1);
     m_dirty = false;
     UpdateStatusLabel();
@@ -1729,10 +2742,7 @@ bool DTMEditorDialog::LoadFile(const QString& path)
     m_file_movie_kind = EditorMovieKind::Wii;
     m_using_runtime_movie = false;
     m_runtime_movie_kind = EditorMovieKind::None;
-    std::vector<std::optional<u64>> row_game_frames(wii->rows.size());
-    for (size_t i = 0; i < row_game_frames.size(); ++i)
-      row_game_frames[i] = static_cast<u64>(i);
-    m_model->SetWiiMovieData(wii->active_wiimotes, wii->rows, row_game_frames);
+    m_model->SetWiiMovieData(wii->active_wiimotes, wii->rows);
     m_model->SetHighlightedRow(-1);
     m_dirty = false;
     UpdateStatusLabel();
@@ -1805,81 +2815,6 @@ bool DTMEditorDialog::SaveFile(const QString& path)
   return true;
 }
 
-void DTMEditorDialog::PasteInputs()
-{
-  if (m_model->GetKind() != ModelMovieKind::GC)
-  {
-    QMessageBox::information(this, tr("DTM Editor"),
-                             tr("Paste Inputs currently supports GameCube DTM data only."));
-    return;
-  }
-
-  const QString path = QFileDialog::getOpenFileName(this, tr("Paste Inputs From DTM"), QString(),
-                                                    tr("Dolphin TAS Movies (*.dtm)"));
-  if (path.isEmpty())
-    return;
-
-  QFile file(path);
-  if (!file.open(QIODevice::ReadOnly))
-    return;
-  const auto parsed = ParseGCDTMFile(file.readAll());
-  if (!parsed)
-  {
-    QMessageBox::warning(this, tr("DTM Editor"), tr("Failed to parse source DTM file."));
-    return;
-  }
-
-  bool ok = false;
-  const int src_start = QInputDialog::getInt(this, tr("Paste Inputs"), tr("Source start row"), 0, 0,
-                                             std::max(0, static_cast<int>(parsed->rows.size()) - 1), 1, &ok);
-  if (!ok)
-    return;
-  const int src_end = QInputDialog::getInt(this, tr("Paste Inputs"), tr("Source end row"), src_start,
-                                           src_start,
-                                           std::max(src_start, static_cast<int>(parsed->rows.size()) - 1), 1,
-                                           &ok);
-  if (!ok)
-    return;
-  const int dst_start = QInputDialog::getInt(this, tr("Paste Inputs"), tr("Destination start row"),
-                                             std::max(0, m_table->currentIndex().row()), 0,
-                                             std::max(0, m_model->rowCount() - 1), 1, &ok);
-  if (!ok)
-    return;
-
-  const int rows_to_copy = src_end - src_start + 1;
-  if (dst_start + rows_to_copy > m_model->rowCount())
-  {
-    QMessageBox::warning(this, tr("DTM Editor"), tr("Destination range exceeds current movie length."));
-    return;
-  }
-
-  for (int i = 0; i < rows_to_copy; ++i)
-  {
-    const auto& src_row = parsed->rows[static_cast<size_t>(src_start + i)];
-    for (int controller = 0; controller < 4; ++controller)
-    {
-      int dest_col = -1;
-      for (int col = 1; col < m_model->columnCount(); ++col)
-      {
-        int mapped = -1;
-        if (m_model->IsGCControllerColumn(col, &mapped) && mapped == controller)
-          dest_col = col;
-      }
-      if (!parsed->active_controllers[controller] || dest_col < 0)
-        continue;
-
-      if (m_using_runtime_movie && m_runtime_movie_kind == EditorMovieKind::GC)
-        Core::System::GetInstance().GetMovie().SetGCRuntimeFrameState(dst_start + i, controller,
-                                                                      src_row[controller]);
-      m_model->SetGCState(dst_start + i, controller, src_row[controller]);
-    }
-  }
-
-  m_dirty = !m_using_runtime_movie;
-  UpdateStatusLabel();
-  PopulateEditor();
-}
-
 void DTMEditorDialog::UpdateStatusLabel()
 {
   QString status;
@@ -1903,7 +2838,6 @@ void DTMEditorDialog::UpdateStatusLabel()
     status += tr(" [modified]");
 
   m_status_label->setText(status);
-  m_paste_button->setEnabled(m_model->GetKind() == ModelMovieKind::GC);
   m_save_button->setEnabled(m_model->GetKind() != ModelMovieKind::None);
   m_save_button->setText(m_using_runtime_movie ? tr("Export DTM") : tr("Save"));
 }

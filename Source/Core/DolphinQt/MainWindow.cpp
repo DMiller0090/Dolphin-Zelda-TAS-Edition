@@ -524,6 +524,7 @@ MainWindow::~MainWindow()
     delete m_gba_tas_input_windows[i];
     delete m_wii_tas_input_windows[i];
   }
+  delete m_dtm_editor;
 
   ShutdownControllers();
 
@@ -2456,7 +2457,7 @@ void MainWindow::ShowTASInput()
 void MainWindow::ShowDTMEditor()
 {
   if (!m_dtm_editor)
-    m_dtm_editor = new DTMEditorDialog(this);
+    m_dtm_editor = new DTMEditorDialog(nullptr);
 
   m_dtm_editor->show();
   m_dtm_editor->raise();
