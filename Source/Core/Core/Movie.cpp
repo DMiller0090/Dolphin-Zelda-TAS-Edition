@@ -497,6 +497,74 @@ std::optional<GCRuntimeFrameSnapshot> MovieManager::GetGCRuntimeFrameSnapshot() 
   return snapshot;
 }
 
+std::optional<GCRuntimeFrameMetadata> MovieManager::GetGCRuntimeFrameMetadata() const
+{
+  if (!IsMovieActive() || !UsesOnlyGCPads(m_controllers, m_wiimotes))
+    return std::nullopt;
+
+  const std::vector<int> active_controllers = GetActiveGCControllerOrder(m_controllers);
+  if (active_controllers.empty())
+    return std::nullopt;
+
+  GCRuntimeFrameMetadata metadata;
+  for (const int controller : active_controllers)
+    metadata.active_controllers[controller] = true;
+
+  metadata.current_frame = m_current_frame;
+  metadata.is_recording = IsRecordingInput();
+  metadata.is_playing = IsPlayingInput();
+  metadata.is_read_only = m_read_only;
+  metadata.data_generation = m_runtime_data_generation.load();
+
+  const size_t stride = active_controllers.size() * sizeof(ControllerState);
+
+  std::lock_guard guard(m_temp_input_lock);
+  if (m_temp_input.empty())
+    return metadata;
+
+  metadata.row_count = (m_temp_input.size() + stride - 1) / stride;
+  if (stride > 0 && m_current_byte >= stride)
+    metadata.current_input_row = (m_current_byte / stride) - 1;
+  if (metadata.current_input_row >= metadata.row_count && metadata.row_count > 0)
+    metadata.current_input_row = metadata.row_count - 1;
+
+  return metadata;
+}
+
+std::optional<std::array<ControllerState, 4>> MovieManager::GetGCRuntimeFrameRow(const u64 row) const
+{
+  if (!IsMovieActive() || !UsesOnlyGCPads(m_controllers, m_wiimotes))
+    return std::nullopt;
+
+  const std::vector<int> active_controllers = GetActiveGCControllerOrder(m_controllers);
+  if (active_controllers.empty())
+    return std::nullopt;
+
+  const size_t stride = active_controllers.size() * sizeof(ControllerState);
+  if (stride == 0)
+    return std::nullopt;
+
+  std::array<ControllerState, 4> row_data{};
+
+  std::lock_guard guard(m_temp_input_lock);
+  const size_t row_offset = static_cast<size_t>(row) * stride;
+  if (row_offset >= m_temp_input.size())
+    return std::nullopt;
+
+  size_t offset = row_offset;
+  for (const int controller : active_controllers)
+  {
+    if (offset + sizeof(ControllerState) > m_temp_input.size())
+      break;
+
+    std::memcpy(&row_data[static_cast<size_t>(controller)], m_temp_input.data() + offset,
+                sizeof(ControllerState));
+    offset += sizeof(ControllerState);
+  }
+
+  return row_data;
+}
+
 bool MovieManager::SetGCRuntimeFrameState(u64 frame, int controller, const ControllerState& state)
 {
   if (!IsMovieActive() || !UsesOnlyGCPads(m_controllers, m_wiimotes) || controller < 0 ||
@@ -521,6 +589,7 @@ bool MovieManager::SetGCRuntimeFrameState(u64 frame, int controller, const Contr
     return false;
 
   std::memcpy(m_temp_input.data() + offset, &state, sizeof(ControllerState));
+  ++m_runtime_data_generation;
   return true;
 }
 
@@ -558,6 +627,86 @@ std::optional<WiiRuntimeFrameSnapshot> MovieManager::GetWiiRuntimeFrameSnapshot(
   }
 
   return snapshot;
+}
+
+std::optional<WiiRuntimeFrameMetadata> MovieManager::GetWiiRuntimeFrameMetadata() const
+{
+  const auto active_wiimote = GetSingleActiveWiimote(m_controllers, m_wiimotes);
+  if (!IsMovieActive() || !active_wiimote.has_value())
+    return std::nullopt;
+
+  WiiRuntimeFrameMetadata metadata;
+  metadata.active_wiimotes[*active_wiimote] = true;
+  metadata.current_frame = m_current_frame;
+  metadata.is_recording = IsRecordingInput();
+  metadata.is_playing = IsPlayingInput();
+  metadata.is_read_only = m_read_only;
+  metadata.data_generation = m_runtime_data_generation.load();
+
+  std::lock_guard guard(m_temp_input_lock);
+  if (m_temp_input.empty())
+    return metadata;
+
+  size_t offset = 0;
+  u64 row_index = 0;
+  while (offset < m_temp_input.size())
+  {
+    const u8 length = m_temp_input[offset++];
+    if (length > WiimoteEmu::SerializedWiimoteState{}.data.size() ||
+        offset + length > m_temp_input.size())
+    {
+      break;
+    }
+
+    offset += length;
+    if (m_current_byte >= offset)
+      metadata.current_input_row = row_index;
+    ++row_index;
+  }
+
+  metadata.row_count = row_index;
+  if (metadata.current_input_row >= metadata.row_count && metadata.row_count > 0)
+    metadata.current_input_row = metadata.row_count - 1;
+
+  return metadata;
+}
+
+std::optional<WiiRuntimeInputRow> MovieManager::GetWiiRuntimeFrameRow(const u64 row) const
+{
+  const auto active_wiimote = GetSingleActiveWiimote(m_controllers, m_wiimotes);
+  if (!IsMovieActive() || !active_wiimote.has_value())
+    return std::nullopt;
+
+  std::lock_guard guard(m_temp_input_lock);
+  size_t offset = 0;
+  u64 row_index = 0;
+  while (offset < m_temp_input.size())
+  {
+    const u8 length = m_temp_input[offset++];
+    if (length > WiimoteEmu::SerializedWiimoteState{}.data.size() ||
+        offset + length > m_temp_input.size())
+    {
+      return std::nullopt;
+    }
+
+    if (row_index == row)
+    {
+      WiiRuntimeInputRow row_data;
+      row_data.wiimote = *active_wiimote;
+      row_data.is_reset = length == 0;
+      row_data.serialized_state.length = length;
+      if (length > 0)
+      {
+        std::copy_n(m_temp_input.data() + offset, length, row_data.serialized_state.data.data());
+      }
+      return row_data;
+    }
+
+    offset += length;
+    ++row_index;
+  }
+
+  return std::nullopt;
 }
 
 bool MovieManager::SetWiiRuntimeFrameState(u64 row,
@@ -603,6 +752,7 @@ bool MovieManager::SetWiiRuntimeFrameState(u64 row,
   }
 
   m_temp_input = std::move(rebuilt_input);
+  ++m_runtime_data_generation;
 
   if (!rows.empty() && row <= current_row_index)
   {
@@ -1535,6 +1685,13 @@ void MovieManager::DoState(PointerWrap& p)
 void MovieManager::OnAfterStateLoad()
 {
   {
+    std::lock_guard guard(m_temp_input_lock);
+    m_gc_runtime_row_frames.clear();
+    m_wii_runtime_row_frames.clear();
+  }
+  ++m_runtime_data_generation;
+
+  {
     std::lock_guard guard(m_input_display_lock);
     for (auto& display : m_input_display)
       display.clear();
@@ -1622,6 +1779,7 @@ void MovieManager::LoadInput(const std::string& movie_path)
     m_temp_input = std::move(loaded_input);
     m_gc_runtime_row_frames.clear();
     m_wii_runtime_row_frames.clear();
+    ++m_runtime_data_generation;
   }
   else if (current_byte_snapshot > 0)
   {
@@ -1662,6 +1820,7 @@ void MovieManager::LoadInput(const std::string& movie_path)
           std::lock_guard guard(m_temp_input_lock);
           if (movInput.size() <= m_temp_input.size())
             std::ranges::copy(movInput, m_temp_input.begin());
+          ++m_runtime_data_generation;
         }
         else
         {

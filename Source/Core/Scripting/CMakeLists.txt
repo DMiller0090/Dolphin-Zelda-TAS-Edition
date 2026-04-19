@@ -63,4 +63,8 @@ target_compile_definitions(scripting PRIVATE
   DOLPHIN_PYTHON_ZIP="${DOLPHIN_PYTHON_ZIP}"
 )
 # TODO imgui shouldn't be here
-target_link_libraries(scripting PRIVATE Python3::Python imgui core nfd)
+target_link_libraries(scripting PRIVATE Python3::Python imgui core)
+
+if(WIN32)
+  target_link_libraries(scripting PRIVATE Comdlg32)
+endif()
