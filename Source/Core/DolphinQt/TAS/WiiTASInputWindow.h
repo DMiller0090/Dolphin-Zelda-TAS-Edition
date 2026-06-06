@@ -44,6 +44,8 @@ public:
   void UpdateMotionPlus(bool attached);
 
 private:
+  void ApplyVisibilitySettings() override;
+  bool IsVisibilitySectionAvailable(const std::string& key) const override;
   void UpdateLiveInputDisplay() override;
   WiimoteEmu::Wiimote* GetWiimote();
   ControllerEmu::Attachments* GetAttachments();
@@ -55,9 +57,9 @@ private:
   void ApplyBatteryOverrideFromUI();
   void UpdateFavoritesWidgetHeight();
 
-  WiimoteEmu::ExtensionNumber m_active_extension;
+  WiimoteEmu::ExtensionNumber m_active_extension = WiimoteEmu::ExtensionNumber::NONE;
   int m_attachment_callback_id = -1;
-  bool m_is_motion_plus_attached;
+  bool m_is_motion_plus_attached = false;
   int m_motion_plus_callback_id = -1;
   int m_num;
 
@@ -95,6 +97,8 @@ private:
   TASCheckBox* m_classic_right_button;
   TASSpinBox* m_ir_x_value;
   TASSpinBox* m_ir_y_value;
+  QCheckBox* m_ir_offscreen = nullptr;
+  QCheckBox* m_ir_instant_point = nullptr;
   TASSpinBox* m_remote_accelerometer_x_value = nullptr;
   TASSpinBox* m_remote_accelerometer_y_value = nullptr;
   TASSpinBox* m_remote_accelerometer_z_value = nullptr;
@@ -124,6 +128,8 @@ private:
   QGroupBox* m_nunchuk_buttons_box;
   QGroupBox* m_classic_buttons_box;
   QGroupBox* m_triggers_box;
+  QGroupBox* m_battery_box = nullptr;
+  QGroupBox* m_reset_box = nullptr;
   ScriptFavoritesWidget* m_favorites_widget = nullptr;
   QSpinBox* m_battery_value = nullptr;
 };

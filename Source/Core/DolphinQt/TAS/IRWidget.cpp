@@ -19,8 +19,7 @@ IRWidget::IRWidget(QWidget* parent) : QWidget(parent)
   setToolTip(tr("Left click to set the IR value.\n"
                 "Right click to re-center it."));
 
-  // If the widget gets too small, it will get deformed.
-  setMinimumSize(QSize(64, 48));
+  setMinimumSize(QSize(16, 12));
 }
 
 void IRWidget::SetX(u16 x)

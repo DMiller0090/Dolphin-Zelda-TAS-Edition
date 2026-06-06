@@ -7,6 +7,8 @@
 
 #include <fmt/format.h>
 
+#include <array>
+
 #include <QAction>
 #include <QCloseEvent>
 #include <QContextMenuEvent>
@@ -18,6 +20,7 @@
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPointer>
 
 #include "AudioCommon/AudioCommon.h"
 #include "Core/Config/MainSettings.h"
@@ -34,6 +37,11 @@
 #include "DolphinQt/Resources.h"
 #include "DolphinQt/Settings.h"
 #include "DolphinQt/Settings/GameCubePane.h"
+
+namespace
+{
+std::array<QPointer<GBAWidget>, 4> s_gba_widgets;
+}
 
 static void RestartCore(const std::weak_ptr<HW::GBA::Core>& core, std::string_view rom_path = {})
 {
@@ -596,6 +604,14 @@ GBAWidgetController::~GBAWidgetController()
   m_widget->deleteLater();
 }
 
+GBAWidget* GBAWidgetController::GetWidgetForDevice(int device_number)
+{
+  if (device_number < 0 || device_number >= static_cast<int>(s_gba_widgets.size()))
+    return nullptr;
+
+  return s_gba_widgets[device_number];
+}
+
 void GBAWidgetController::Create(std::weak_ptr<HW::GBA::Core> core, const HW::GBA::CoreInfo& info)
 {
   std::optional<NetPlay::PadDetails> netplay_pad;
@@ -606,6 +622,8 @@ void GBAWidgetController::Create(std::weak_ptr<HW::GBA::Core> core, const HW::GB
       netplay_pad = details;
   }
   m_widget = new GBAWidget(std::move(core), info, netplay_pad);
+  if (info.device_number >= 0 && info.device_number < static_cast<int>(s_gba_widgets.size()))
+    s_gba_widgets[info.device_number] = m_widget;
 }
 
 void GBAWidgetController::GameChanged(const HW::GBA::CoreInfo& info)

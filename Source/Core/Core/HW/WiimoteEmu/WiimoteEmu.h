@@ -123,6 +123,7 @@ public:
   static constexpr const char* ACCELEROMETER_GROUP = "IMUAccelerometer";
   static constexpr const char* GYROSCOPE_GROUP = "IMUGyroscope";
   static constexpr const char* IR_GROUP = "IR";
+  static constexpr const char* IR_INSTANT_POINT_OVERRIDE = "Instant Point";
   static constexpr const char* IR_PASSTHROUGH_GROUP = "IRPassthrough";
 
   static constexpr const char* A_BUTTON = "A";

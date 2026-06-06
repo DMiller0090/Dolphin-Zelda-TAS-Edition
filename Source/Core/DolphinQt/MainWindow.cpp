@@ -104,6 +104,7 @@
 #include "DolphinQt/EmulatedUSB/LogitechMicWindow.h"
 #include "DolphinQt/EmulatedUSB/WiiSpeakWindow.h"
 #include "DolphinQt/FIFO/FIFOPlayerWindow.h"
+#include "DolphinQt/GBAWidget.h"
 #include "DolphinQt/GCMemcardManager.h"
 #include "DolphinQt/GameList/GameList.h"
 #include "DolphinQt/Host.h"
@@ -382,6 +383,14 @@ static void ApplyWindowGeometry(QWidget* window, const WindowPresetEntry& entry)
 
   if (!was_minimized && window->isMinimized())
     window->setWindowState(window->windowState() & ~Qt::WindowMinimized);
+
+  if (window->isVisible())
+  {
+    window->raise();
+    window->activateWindow();
+    if (QWindow* handle = window->windowHandle())
+      handle->requestActivate();
+  }
 }
 
 MainWindow::MainWindow(Core::System& system, std::unique_ptr<BootParameters> boot_parameters,
@@ -900,6 +909,11 @@ void MainWindow::ConnectRenderWidget()
   m_render_widget->hide();
   connect(m_render_widget, &RenderWidget::Closed, this, &MainWindow::ForceStop);
   connect(m_render_widget, &RenderWidget::FocusChanged, this, [this](bool focus) {
+    if (focus)
+    {
+      Host::GetInstance()->SetTASInputFocus(false);
+      HotkeyManagerEmu::SetStateHotkeysBlocked(false);
+    }
     if (m_render_widget->isFullScreen())
       SetFullScreenResolution(focus);
   });
@@ -1454,6 +1468,11 @@ void MainWindow::HideRenderWidget(bool reinit, bool is_exit)
     m_render_widget->installEventFilter(this);
     connect(m_render_widget, &RenderWidget::Closed, this, &MainWindow::ForceStop);
     connect(m_render_widget, &RenderWidget::FocusChanged, this, [this](bool focus) {
+      if (focus)
+      {
+        Host::GetInstance()->SetTASInputFocus(false);
+        HotkeyManagerEmu::SetStateHotkeysBlocked(false);
+      }
       if (m_render_widget->isFullScreen())
         SetFullScreenResolution(focus);
     });
@@ -1571,8 +1590,15 @@ void MainWindow::SaveWindowPreset()
 
   for (int i = 0; i < static_cast<int>(m_gc_tas_input_windows.size()); ++i)
     add_window_entry(MakeWindowPresetKey(QStringLiteral("GCTAS"), i), m_gc_tas_input_windows[i]);
+  for (int i = 0; i < static_cast<int>(m_gba_tas_input_windows.size()); ++i)
+    add_window_entry(MakeWindowPresetKey(QStringLiteral("GBATAS"), i), m_gba_tas_input_windows[i]);
   for (int i = 0; i < static_cast<int>(m_wii_tas_input_windows.size()); ++i)
     add_window_entry(MakeWindowPresetKey(QStringLiteral("WiiTAS"), i), m_wii_tas_input_windows[i]);
+#ifdef HAS_LIBMGBA
+  for (int i = 0; i < num_gc_controllers; ++i)
+    add_window_entry(MakeWindowPresetKey(QStringLiteral("GBA"), i),
+                     GBAWidgetController::GetWidgetForDevice(i));
+#endif
 
   QSaveFile file(WindowPresetsPath());
   if (!file.open(QIODevice::WriteOnly | QIODevice::Text))
@@ -1612,9 +1638,13 @@ void MainWindow::LoadWindowPreset()
 
   QStringList names = preset_names.values();
   names.sort(Qt::CaseInsensitive);
+  int current_index = names.indexOf(m_last_window_preset_name);
+  if (current_index < 0)
+    current_index = 0;
   bool ok = false;
   const QString preset_name =
-      QInputDialog::getItem(this, tr("Load Window Preset"), tr("Preset:"), names, 0, false, &ok);
+      QInputDialog::getItem(this, tr("Load Window Preset"), tr("Preset:"), names, current_index,
+                            false, &ok);
   if (!ok || preset_name.trimmed().isEmpty())
     return;
 
@@ -1704,6 +1734,18 @@ void MainWindow::ApplyWindowPreset(const QString& preset_name, bool warn_if_miss
       continue;
     }
 
+    if (entry.window.startsWith(QStringLiteral("GBATAS")))
+    {
+      const int index = entry.window.mid(6).toInt() - 1;
+      if (index >= 0 && index < static_cast<int>(m_gba_tas_input_windows.size()) &&
+          m_gba_tas_input_windows[index])
+      {
+        ApplyWindowGeometry(m_gba_tas_input_windows[index], entry);
+        applied = true;
+      }
+      continue;
+    }
+
     if (entry.window.startsWith(QStringLiteral("WiiTAS")))
     {
       const int index = entry.window.mid(6).toInt() - 1;
@@ -1715,6 +1757,19 @@ void MainWindow::ApplyWindowPreset(const QString& preset_name, bool warn_if_miss
       }
       continue;
     }
+
+#ifdef HAS_LIBMGBA
+    if (entry.window.startsWith(QStringLiteral("GBA")))
+    {
+      const int index = entry.window.mid(3).toInt() - 1;
+      if (GBAWidget* widget = GBAWidgetController::GetWidgetForDevice(index))
+      {
+        ApplyWindowGeometry(widget, entry);
+        applied = true;
+      }
+      continue;
+    }
+#endif
   }
 
   if (!applied && warn_if_missing)
@@ -1722,6 +1777,10 @@ void MainWindow::ApplyWindowPreset(const QString& preset_name, bool warn_if_miss
     ModalMessageBox::information(
         this, tr("Window Presets"),
         tr("No matching window sizes were found for \"%1\".").arg(preset_name), QMessageBox::Ok);
+  }
+  else if (applied)
+  {
+    m_last_window_preset_name = preset_name.trimmed();
   }
 }
 

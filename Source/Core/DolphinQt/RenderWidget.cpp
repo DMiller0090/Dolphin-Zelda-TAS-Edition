@@ -21,6 +21,7 @@
 
 #include "Core/Config/MainSettings.h"
 #include "Core/Core.h"
+#include "Core/HotkeyManager.h"
 #include "Core/State.h"
 #include "Core/System.h"
 
@@ -395,6 +396,8 @@ bool RenderWidget::event(QEvent* event)
 
     // Grab focus to stop unwanted keyboard input UI interaction.
     setFocus();
+    Host::GetInstance()->SetTASInputFocus(false);
+    HotkeyManagerEmu::SetStateHotkeysBlocked(false);
 
     if (isActiveWindow())
     {

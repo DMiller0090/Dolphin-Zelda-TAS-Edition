@@ -6,6 +6,7 @@
 #include <QWidget>
 
 class QLabel;
+class QPushButton;
 class ConfigBool;
 class ConfigInteger;
 
@@ -18,6 +19,8 @@ private:
   void CreateLayout();
   void ConnectLayout();
   void AddDescriptions();
+  void UpdateLegacyInputDisplayColorButton();
+  bool eventFilter(QObject* object, QEvent* event) override;
 
   // General
   ConfigBool* m_enable_osd;
@@ -40,6 +43,8 @@ private:
   ConfigBool* m_frame_counter;
   ConfigBool* m_input_display;
   ConfigBool* m_system_clock;
+  QPushButton* m_legacy_input_display_color;
+  ConfigInteger* m_legacy_input_display_size;
 
   // Netplay
   ConfigBool* m_show_ping;

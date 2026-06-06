@@ -74,7 +74,7 @@ static PyObject* SetMemoryBreakpoint(PyObject* self, PyObject* args)
   }
   else
   {
-    ERROR_LOG_FMT(CORE, "No \"At\" or \"Start\" and \"End\" addresses provided for Memory Breakpoint.");
+    ERROR_LOG_FMT(SCRIPTING, "No \"At\" or \"Start\" and \"End\" addresses provided for Memory Breakpoint.");
     Py_RETURN_NONE;
   }
 

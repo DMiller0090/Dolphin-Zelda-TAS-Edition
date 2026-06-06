@@ -289,6 +289,29 @@ static PyObject* set_gc_buttons(PyObject* module, PyObject* args)
   Py_RETURN_NONE;
 }
 
+static PyObject* set_gc_input_override(PyObject* module, PyObject* args)
+{
+  int controller_id;
+  PyObject* dict;
+  if (!PyArg_ParseTuple(args, "iO!", &controller_id, &PyDict_Type, &dict))
+    return nullptr;
+  GCPadStatus status = GCPadStatusFromPyDict(dict);
+  ControllerModuleState* state = Py::GetState<ControllerModuleState>(module);
+  state->gc_manip->Set(status, controller_id, API::ClearOn::NextOverride);
+  Py_RETURN_NONE;
+}
+
+static PyObject* clear_gc_input_override(PyObject* module, PyObject* args)
+{
+  auto controller_id_opt = Py::ParseTuple<int>(args);
+  if (!controller_id_opt.has_value())
+    return nullptr;
+  int controller_id = std::get<0>(controller_id_opt.value());
+  ControllerModuleState* state = Py::GetState<ControllerModuleState>(module);
+  state->gc_manip->Clear(controller_id);
+  Py_RETURN_NONE;
+}
+
 static PyObject* get_wii_buttons(PyObject* module, PyObject* args)
 {
   auto controller_id_opt = Py::ParseTuple<int>(args);
@@ -429,6 +452,22 @@ static PyObject* set_nunchuck_accelerometer(PyObject* module, PyObject* args)
   state->nunchuck_accel_manip->Set(status, controller_id, API::ClearOn::NextOverride);
   Py_RETURN_NONE;
 }
+static void ClearControllerState(ControllerModuleState* state)
+{
+  state->gc_manip->Clear();
+  state->wii_buttons_manip->Clear();
+  state->wii_ir_manip->Clear();
+  state->wii_accel_manip->Clear();
+  state->wii_motion_plus_manip->Clear();
+  state->nunchuck_buttons_manip->Clear();
+  state->nunchuck_accel_manip->Clear();
+}
+
+static PyObject* Reset(PyObject* module)
+{
+  ClearControllerState(Py::GetState<ControllerModuleState>(module));
+  Py_RETURN_NONE;
+}
 
 static void setup_controller_module(PyObject* module, ControllerModuleState* state)
 {
@@ -439,15 +478,7 @@ static void setup_controller_module(PyObject* module, ControllerModuleState* sta
   state->wii_motion_plus_manip = PyScriptingBackend::GetCurrent()->GetWiiMotionPlusManip();
   state->nunchuck_buttons_manip = PyScriptingBackend::GetCurrent()->GetNunchuckButtonsManip();
   state->nunchuck_accel_manip = PyScriptingBackend::GetCurrent()->GetNunchuckAccelManip();
-  PyScriptingBackend::GetCurrent()->AddCleanupFunc([state] {
-    state->gc_manip->Clear();
-    state->wii_buttons_manip->Clear();
-    state->wii_ir_manip->Clear();
-    state->wii_accel_manip->Clear();
-    state->wii_motion_plus_manip->Clear();
-    state->nunchuck_buttons_manip->Clear();
-    state->nunchuck_accel_manip->Clear();
-  });
+  PyScriptingBackend::GetCurrent()->AddCleanupFunc([state] { ClearControllerState(state); });
 }
 
 PyMODINIT_FUNC PyInit_controller()
@@ -455,6 +486,8 @@ PyMODINIT_FUNC PyInit_controller()
   static PyMethodDef method_defs[] = {
       {"get_gc_buttons", get_gc_buttons, METH_VARARGS, ""},
       {"set_gc_buttons", set_gc_buttons, METH_VARARGS, ""},
+      {"set_gc_input_override", set_gc_input_override, METH_VARARGS, ""},
+      {"clear_gc_input_override", clear_gc_input_override, METH_VARARGS, ""},
       {"get_wii_buttons", get_wii_buttons, METH_VARARGS, ""},
       {"set_wii_buttons", set_wii_buttons, METH_VARARGS, ""},
       {"set_wii_ircamera_transform", set_wii_ircamera_transform, METH_VARARGS, ""},
@@ -467,6 +500,7 @@ PyMODINIT_FUNC PyInit_controller()
       {"set_nunchuck_buttons", set_nunchuck_buttons, METH_VARARGS, ""},
       {"get_nunchuck_accelerometer", get_nunchuck_accelerometer, METH_VARARGS, ""},
       {"set_nunchuck_accelerometer", set_nunchuck_accelerometer, METH_VARARGS, ""},
+      Py::MakeMethodDef<Reset>("_dolphin_reset"),
       
       {nullptr, nullptr, 0, nullptr}  // Sentinel
   };

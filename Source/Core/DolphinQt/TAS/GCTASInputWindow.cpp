@@ -62,6 +62,7 @@ GCTASInputWindow::GCTASInputWindow(QWidget* parent, int controller_id)
     s_gc_tas_windows[m_controller_id] = this;
 
   setWindowTitle(tr("GameCube TAS Input %1").arg(controller_id + 1));
+  SetAlwaysOnTopConfigKey("GC.AlwaysOnTop." + std::to_string(controller_id));
 
   StickWidget* main_stick_widget = nullptr;
   StickWidget* c_stick_widget = nullptr;
@@ -73,9 +74,9 @@ GCTASInputWindow::GCTASInputWindow(QWidget* parent, int controller_id)
                                     &m_c_stick_y_value, &c_stick_widget);
 
   if (main_stick_widget)
-    main_stick_widget->setMinimumSize(100, 100);
+    main_stick_widget->setMinimumSize(16, 16);
   if (c_stick_widget)
-    c_stick_widget->setMinimumSize(100, 100);
+    c_stick_widget->setMinimumSize(16, 16);
 
   auto* top_layout = new QHBoxLayout;
   top_layout->addWidget(m_main_stick_box);
@@ -177,7 +178,15 @@ GCTASInputWindow::GCTASInputWindow(QWidget* parent, int controller_id)
   auto* layout = new QVBoxLayout;
   layout->addLayout(top_layout);
   layout->addLayout(lower_row);
-  setLayout(layout);
+  SetResizableContentLayout(layout);
+
+  RegisterVisibilitySection(tr("Main Stick"), "GC.MainStick", m_main_stick_box);
+  RegisterVisibilitySection(tr("C Stick"), "GC.CStick", m_c_stick_box);
+  RegisterVisibilitySection(tr("Triggers"), "GC.Triggers", m_triggers_box);
+  RegisterVisibilitySection(tr("Buttons"), "GC.Buttons", m_buttons_box);
+  RegisterVisibilitySection(tr("Settings"), "GC.Settings", m_settings_box);
+  RegisterVisibilitySection(tr("Favorite Scripts"), "GC.FavoriteScripts", favorites_widget);
+  FinalizeVisibilitySections();
 
   if (m_toggle_lines && main_stick_widget)
     connect(m_toggle_lines, &QCheckBox::toggled, main_stick_widget, &StickWidget::SetAxisLines);

@@ -538,6 +538,17 @@ if(WIN32)
     )
   endif()
 
+  if (DEFINED DOLPHIN_PYTHON_STDLIB AND EXISTS "${DOLPHIN_PYTHON_STDLIB}")
+    add_custom_command(TARGET dolphin-emu POST_BUILD
+      COMMAND ${CMAKE_COMMAND}
+              -DPYTHON_STDLIB="${DOLPHIN_PYTHON_STDLIB}"
+              -DPYTHON_DLLS="${DOLPHIN_PYTHON_DLLS}"
+              -DPYTHON_ZIP="${DOLPHIN_PYTHON_ZIP}"
+              -DOUTPUT_DIR="$<TARGET_FILE_DIR:dolphin-emu>"
+              -P "${CMAKE_SOURCE_DIR}/Source/Core/Scripting/CopyPythonEmbed.cmake"
+    )
+  endif()
+
   if (ENABLE_AUTOUPDATE)
     # Copy build_info.txt
     add_custom_command(TARGET dolphin-emu POST_BUILD

@@ -203,7 +203,7 @@ def draw_convex_poly_filled(points, color):
   Py::Object result = Py::LoadPyCodeIntoModule(module, pycode);
   if (result.IsNull())
   {
-    ERROR_LOG_FMT(CORE, "Failed to load embedded python code into gui module");
+    ERROR_LOG_FMT(SCRIPTING, "Failed to load embedded python code into gui module");
   }
   API::Gui* gui = PyScripting::PyScriptingBackend::GetCurrent()->GetGui();
   state->gui = gui;

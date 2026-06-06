@@ -458,7 +458,10 @@ std::optional<GCRuntimeFrameSnapshot> MovieManager::GetGCRuntimeFrameSnapshot() 
 
   GCRuntimeFrameSnapshot snapshot;
   for (const int controller : active_controllers)
+  {
     snapshot.active_controllers[controller] = true;
+    snapshot.active_gba_controllers[controller] = m_controllers[controller] == ControllerType::GBA;
+  }
 
   snapshot.current_frame = m_current_frame;
   snapshot.is_recording = IsRecordingInput();
@@ -508,7 +511,11 @@ std::optional<GCRuntimeFrameMetadata> MovieManager::GetGCRuntimeFrameMetadata() 
 
   GCRuntimeFrameMetadata metadata;
   for (const int controller : active_controllers)
+  {
     metadata.active_controllers[controller] = true;
+    metadata.active_gba_controllers[controller] =
+        m_controllers[controller] == ControllerType::GBA;
+  }
 
   metadata.current_frame = m_current_frame;
   metadata.is_recording = IsRecordingInput();

@@ -3,11 +3,14 @@
 
 #pragma once
 
+#include <atomic>
+
 #include <QCheckBox>
 
 #include "DolphinQt/TAS/TASControlState.h"
 
 class QMouseEvent;
+class QPaintEvent;
 class TASInputWindow;
 
 class TASCheckBox : public QCheckBox
@@ -23,6 +26,7 @@ public:
 
 protected:
   void mousePressEvent(QMouseEvent* event) override;
+  void paintEvent(QPaintEvent* event) override;
 
 private slots:
 #if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
@@ -33,9 +37,15 @@ private slots:
   void ApplyControllerValueChange();
 
 private:
+  bool IsTurboActive() const;
+  void QueueVisualTurboUpdate(bool active, bool force = false) const;
+
   const TASInputWindow* m_parent;
   TASControlState m_state;
   int m_frame_turbo_started = 0;
   int m_turbo_press_frames = 0;
   int m_turbo_total_frames = 0;
+  mutable std::atomic_bool m_last_sampled_turbo_active{false};
+  mutable std::atomic_bool m_visual_turbo_enabled_seen{false};
+  bool m_visual_turbo_active = false;
 };

@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <limits>
 #include <string>
 
 #include <QCheckBox>
@@ -77,6 +78,20 @@ constexpr double k_gyro_stretch =
     static_cast<double>(WiimoteEmu::MotionPlus::CALIBRATION_FAST_SCALE_DEGREES) /
     WiimoteEmu::MotionPlus::CALIBRATION_SLOW_SCALE_DEGREES;
 
+constexpr const char* SECTION_WII_IR = "Wii.IR";
+constexpr const char* SECTION_WII_NUNCHUK_STICK = "Wii.NunchukStick";
+constexpr const char* SECTION_WII_CLASSIC_LEFT_STICK = "Wii.ClassicLeftStick";
+constexpr const char* SECTION_WII_CLASSIC_RIGHT_STICK = "Wii.ClassicRightStick";
+constexpr const char* SECTION_WII_REMOTE_ACCELEROMETER = "Wii.RemoteAccelerometer";
+constexpr const char* SECTION_WII_REMOTE_GYROSCOPE = "Wii.RemoteGyroscope";
+constexpr const char* SECTION_WII_NUNCHUK_ACCELEROMETER = "Wii.NunchukAccelerometer";
+constexpr const char* SECTION_WII_TRIGGERS = "Wii.Triggers";
+constexpr const char* SECTION_WII_BUTTONS = "Wii.Buttons";
+constexpr const char* SECTION_WII_SETTINGS = "Wii.Settings";
+constexpr const char* SECTION_WII_BATTERY = "Wii.Battery";
+constexpr const char* SECTION_WII_RESET = "Wii.Reset";
+constexpr const char* SECTION_WII_FAVORITE_SCRIPTS = "Wii.FavoriteScripts";
+
 int GyroRawToTasValue(u16 raw_value)
 {
   return static_cast<int>(std::lround(raw_value * k_gyro_stretch));
@@ -92,6 +107,8 @@ WiiTASInputWindow::WiiTASInputWindow(QWidget* parent, int num) : TASInputWindow(
 {
   if (m_num >= 0 && m_num < 4)
     s_wii_tas_windows[m_num] = this;
+
+  SetAlwaysOnTopConfigKey("Wii.AlwaysOnTop." + std::to_string(num));
 
   const QKeySequence ir_x_shortcut_key_sequence = QKeySequence(Qt::ALT | Qt::Key_X);
   const QKeySequence ir_y_shortcut_key_sequence = QKeySequence(Qt::ALT | Qt::Key_C);
@@ -116,6 +133,46 @@ WiiTASInputWindow::WiiTASInputWindow(QWidget* parent, int num) : TASInputWindow(
       &m_wiimote_overrider, y_layout, ir_y_center, ir_y_center, IRWidget::IR_MIN_Y,
       IRWidget::IR_MAX_Y, ir_y_shortcut_key_sequence, Qt::Vertical, m_ir_box);
   m_ir_y_value->setMaximumWidth(60);
+  m_ir_offscreen = new QCheckBox(tr("Offscreen"), m_ir_box);
+  m_ir_instant_point = new QCheckBox(tr("Instant Point"), m_ir_box);
+
+  m_wiimote_overrider.AddFunction(
+      WiimoteEmu::Wiimote::IR_GROUP, ControllerEmu::ReshapableInput::X_INPUT_OVERRIDE,
+      [this, ir_x_center](ControlState controller_state) -> std::optional<ControlState> {
+        if (m_ir_offscreen->isChecked())
+          return std::numeric_limits<ControlState>::quiet_NaN();
+
+        const int controller_value = ControllerEmu::MapFloat<int>(
+            controller_state, ir_x_center, IRWidget::IR_MIN_X, IRWidget::IR_MAX_X);
+        if (m_use_controller->isChecked())
+          m_ir_x_value->OnControllerValueChanged(controller_value);
+
+        return ControllerEmu::MapToFloat<ControlState, int>(m_ir_x_value->GetValue(), ir_x_center,
+                                                            IRWidget::IR_MIN_X,
+                                                            IRWidget::IR_MAX_X);
+      });
+
+  m_wiimote_overrider.AddFunction(
+      WiimoteEmu::Wiimote::IR_GROUP, ControllerEmu::ReshapableInput::Y_INPUT_OVERRIDE,
+      [this, ir_y_center](ControlState controller_state) -> std::optional<ControlState> {
+        if (m_ir_offscreen->isChecked())
+          return 0.0;
+
+        const int controller_value = ControllerEmu::MapFloat<int>(
+            controller_state, ir_y_center, IRWidget::IR_MIN_Y, IRWidget::IR_MAX_Y);
+        if (m_use_controller->isChecked())
+          m_ir_y_value->OnControllerValueChanged(controller_value);
+
+        return ControllerEmu::MapToFloat<ControlState, int>(m_ir_y_value->GetValue(), ir_y_center,
+                                                            IRWidget::IR_MIN_Y,
+                                                            IRWidget::IR_MAX_Y);
+      });
+
+  m_wiimote_overrider.AddFunction(
+      WiimoteEmu::Wiimote::IR_GROUP, WiimoteEmu::Wiimote::IR_INSTANT_POINT_OVERRIDE,
+      [this](ControlState) -> std::optional<ControlState> {
+        return m_ir_instant_point->isChecked() ? 1.0 : 0.0;
+      });
 
   auto* visual = new IRWidget(this);
   visual->SetX(ir_x_center);
@@ -132,8 +189,14 @@ WiiTASInputWindow::WiiTASInputWindow(QWidget* parent, int num) : TASInputWindow(
   visual_layout->addWidget(visual_ar);
   visual_layout->addLayout(y_layout);
 
+  auto* ir_options_layout = new QHBoxLayout;
+  ir_options_layout->addWidget(m_ir_offscreen);
+  ir_options_layout->addWidget(m_ir_instant_point);
+  ir_options_layout->addStretch();
+
   auto* ir_layout = new QVBoxLayout;
   ir_layout->addLayout(x_layout);
+  ir_layout->addLayout(ir_options_layout);
   ir_layout->addLayout(visual_layout);
   m_ir_box->setLayout(ir_layout);
 
@@ -171,12 +234,10 @@ WiiTASInputWindow::WiiTASInputWindow(QWidget* parent, int num) : TASInputWindow(
   // used on the QGroupBox will cause the StickWidgets to have different sizes.
   m_ir_box->setMinimumWidth(20);
   m_nunchuk_stick_box->setMinimumWidth(20);
-  const int top_input_box_min_height =
-      std::max(m_ir_box->sizeHint().height(), m_nunchuk_stick_box->sizeHint().height());
-  m_ir_box->setMinimumHeight(top_input_box_min_height);
-  m_nunchuk_stick_box->setMinimumHeight(top_input_box_min_height);
-  m_classic_left_stick_box->setMinimumHeight(top_input_box_min_height);
-  m_classic_right_stick_box->setMinimumHeight(top_input_box_min_height);
+  m_ir_box->setMinimumHeight(20);
+  m_nunchuk_stick_box->setMinimumHeight(20);
+  m_classic_left_stick_box->setMinimumHeight(20);
+  m_classic_right_stick_box->setMinimumHeight(20);
 
   auto* top_layout = new QHBoxLayout;
   top_layout->addWidget(m_ir_box);
@@ -430,62 +491,60 @@ WiiTASInputWindow::WiiTASInputWindow(QWidget* parent, int num) : TASInputWindow(
   m_classic_buttons_box = new QGroupBox(tr("Classic Buttons"));
   m_classic_buttons_box->setLayout(classic_buttons_layout);
 
-  if (auto* settings_layout = qobject_cast<QGridLayout*>(m_settings_box->layout()))
-  {
-    auto* battery_label = new QLabel(tr("Wii Remote Battery (%):"));
-    auto* battery_value = new QSpinBox();
-    battery_value->setRange(0, 100);
-    m_battery_value = battery_value;
+  m_battery_box = new QGroupBox(tr("Battery"));
+  auto* battery_label = new QLabel(tr("Wii Remote Battery (%):"));
+  auto* battery_value = new QSpinBox();
+  battery_value->setRange(0, 100);
+  m_battery_value = battery_value;
 
-    auto* battery_slider = new QSlider(Qt::Horizontal);
-    battery_slider->setRange(0, 100);
-    battery_slider->setSingleStep(1);
-    battery_slider->setPageStep(10);
+  auto* battery_slider = new QSlider(Qt::Horizontal);
+  battery_slider->setRange(0, 100);
+  battery_slider->setSingleStep(1);
+  battery_slider->setPageStep(10);
 
-    const auto set_battery_full = [this, battery_value, battery_slider] {
-      battery_value->setValue(100);
-      battery_slider->setValue(100);
-      ApplyBatteryOverrideFromUI();
-    };
-    set_battery_full();
+  const auto set_battery_full = [this, battery_value, battery_slider] {
+    battery_value->setValue(100);
+    battery_slider->setValue(100);
+    ApplyBatteryOverrideFromUI();
+  };
+  set_battery_full();
 
-    battery_value->setContextMenuPolicy(Qt::CustomContextMenu);
-    battery_slider->setContextMenuPolicy(Qt::CustomContextMenu);
-    connect(battery_value, &QWidget::customContextMenuRequested, this,
-            [set_battery_full](const QPoint&) { set_battery_full(); });
-    connect(battery_slider, &QWidget::customContextMenuRequested, this,
-            [set_battery_full](const QPoint&) { set_battery_full(); });
+  battery_value->setContextMenuPolicy(Qt::CustomContextMenu);
+  battery_slider->setContextMenuPolicy(Qt::CustomContextMenu);
+  connect(battery_value, &QWidget::customContextMenuRequested, this,
+          [set_battery_full](const QPoint&) { set_battery_full(); });
+  connect(battery_slider, &QWidget::customContextMenuRequested, this,
+          [set_battery_full](const QPoint&) { set_battery_full(); });
 
-    connect(battery_slider, &QSlider::valueChanged, battery_value, &QSpinBox::setValue);
-    connect(battery_value, &QSpinBox::valueChanged, battery_slider, &QSlider::setValue);
-    connect(battery_value, &QSpinBox::valueChanged, this, [this](int value) {
-      (void)value;
-      ApplyBatteryOverrideFromUI();
-    });
+  connect(battery_slider, &QSlider::valueChanged, battery_value, &QSpinBox::setValue);
+  connect(battery_value, &QSpinBox::valueChanged, battery_slider, &QSlider::setValue);
+  connect(battery_value, &QSpinBox::valueChanged, this, [this](int value) {
+    (void)value;
+    ApplyBatteryOverrideFromUI();
+  });
 
-    const int battery_row = settings_layout->rowCount();
-    settings_layout->addWidget(battery_label, battery_row, 0);
-    auto* battery_layout = new QHBoxLayout();
-    battery_layout->addWidget(battery_slider);
-    battery_layout->addWidget(battery_value);
-    auto* battery_container = new QWidget();
-    battery_container->setLayout(battery_layout);
-    settings_layout->addWidget(battery_container, battery_row, 1);
+  auto* battery_layout = new QHBoxLayout();
+  battery_layout->addWidget(battery_label);
+  battery_layout->addWidget(battery_slider);
+  battery_layout->addWidget(battery_value);
+  m_battery_box->setLayout(battery_layout);
 
-    auto* reset_button = new QPushButton(tr("Reset Console"));
-    reset_button->setToolTip(tr("Tap the console reset button and record it in the movie."));
-    reset_button->setAutoDefault(false);
-    reset_button->setDefault(false);
-    reset_button->setFocusPolicy(Qt::NoFocus);
-    connect(reset_button, &QPushButton::clicked, this, [] {
-      auto& system = Core::System::GetInstance();
-      auto& movie = system.GetMovie();
-      if (movie.IsMovieActive())
-        movie.SetReset(true);
-      system.GetProcessorInterface().ResetButton_Tap();
-    });
-    settings_layout->addWidget(reset_button, settings_layout->rowCount(), 0, 1, 2);
-  }
+  m_reset_box = new QGroupBox(tr("Reset"));
+  auto* reset_button = new QPushButton(tr("Reset Console"));
+  reset_button->setToolTip(tr("Tap the console reset button and record it in the movie."));
+  reset_button->setAutoDefault(false);
+  reset_button->setDefault(false);
+  reset_button->setFocusPolicy(Qt::NoFocus);
+  connect(reset_button, &QPushButton::clicked, this, [] {
+    auto& system = Core::System::GetInstance();
+    auto& movie = system.GetMovie();
+    if (movie.IsMovieActive())
+      movie.SetReset(true);
+    system.GetProcessorInterface().ResetButton_Tap();
+  });
+  auto* reset_layout = new QVBoxLayout();
+  reset_layout->addWidget(reset_button);
+  m_reset_box->setLayout(reset_layout);
 
   m_favorites_widget = new ScriptFavoritesWidget(this);
   m_favorites_widget->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Preferred);
@@ -506,8 +565,32 @@ WiiTASInputWindow::WiiTASInputWindow(QWidget* parent, int num) : TASInputWindow(
   layout->addWidget(m_triggers_box);
   layout->addLayout(buttons_row);
   layout->addWidget(m_settings_box);
+  layout->addWidget(m_battery_box);
+  layout->addWidget(m_reset_box);
 
-  setLayout(layout);
+  SetResizableContentLayout(layout);
+
+  RegisterVisibilitySection(tr("IR"), SECTION_WII_IR, m_ir_box);
+  RegisterVisibilitySection(tr("Nunchuk Stick"), SECTION_WII_NUNCHUK_STICK, m_nunchuk_stick_box);
+  RegisterVisibilitySection(tr("Left Stick"), SECTION_WII_CLASSIC_LEFT_STICK,
+                            m_classic_left_stick_box);
+  RegisterVisibilitySection(tr("Right Stick"), SECTION_WII_CLASSIC_RIGHT_STICK,
+                            m_classic_right_stick_box);
+  RegisterVisibilitySection(tr("Wii Remote Accelerometer"), SECTION_WII_REMOTE_ACCELEROMETER,
+                            m_remote_accelerometer_box);
+  RegisterVisibilitySection(tr("Wii Remote Gyroscope"), SECTION_WII_REMOTE_GYROSCOPE,
+                            m_remote_gyroscope_box);
+  RegisterVisibilitySection(tr("Nunchuk Accelerometer"), SECTION_WII_NUNCHUK_ACCELEROMETER,
+                            m_nunchuk_accelerometer_box);
+  RegisterVisibilitySection(tr("Triggers"), SECTION_WII_TRIGGERS, m_triggers_box);
+  RegisterVisibilitySection(tr("Buttons"), SECTION_WII_BUTTONS,
+                            {m_remote_buttons_box, m_nunchuk_buttons_box, m_classic_buttons_box});
+  RegisterVisibilitySection(tr("Settings"), SECTION_WII_SETTINGS, m_settings_box);
+  RegisterVisibilitySection(tr("Battery"), SECTION_WII_BATTERY, m_battery_box);
+  RegisterVisibilitySection(tr("Reset"), SECTION_WII_RESET, m_reset_box);
+  RegisterVisibilitySection(tr("Favorite Scripts"), SECTION_WII_FAVORITE_SCRIPTS,
+                            m_favorites_widget);
+  FinalizeVisibilitySections();
 }
 
 WiiTASInputWindow::~WiiTASInputWindow()
@@ -586,6 +669,34 @@ void WiiTASInputWindow::UpdateMotionPlus(const bool attached)
   UpdateControlVisibility();
 }
 
+void WiiTASInputWindow::ApplyVisibilitySettings()
+{
+  UpdateControlVisibility();
+}
+
+bool WiiTASInputWindow::IsVisibilitySectionAvailable(const std::string& key) const
+{
+  if (key == SECTION_WII_NUNCHUK_STICK || key == SECTION_WII_NUNCHUK_ACCELEROMETER)
+    return m_active_extension == WiimoteEmu::ExtensionNumber::NUNCHUK;
+
+  if (key == SECTION_WII_CLASSIC_LEFT_STICK || key == SECTION_WII_CLASSIC_RIGHT_STICK ||
+      key == SECTION_WII_TRIGGERS)
+  {
+    return m_active_extension == WiimoteEmu::ExtensionNumber::CLASSIC;
+  }
+
+  if (key == SECTION_WII_REMOTE_GYROSCOPE)
+  {
+    return m_active_extension != WiimoteEmu::ExtensionNumber::CLASSIC &&
+           m_is_motion_plus_attached;
+  }
+
+  if (key == SECTION_WII_IR || key == SECTION_WII_REMOTE_ACCELEROMETER)
+    return m_active_extension != WiimoteEmu::ExtensionNumber::CLASSIC;
+
+  return TASInputWindow::IsVisibilitySectionAvailable(key);
+}
+
 void WiiTASInputWindow::LoadExtensionAndMotionPlus()
 {
   WiimoteEmu::Wiimote* const wiimote = GetWiimote();
@@ -632,52 +743,65 @@ void WiiTASInputWindow::UpdateControlVisibility()
 {
   const bool show_motion_plus_controls =
       m_active_extension != WiimoteEmu::ExtensionNumber::CLASSIC && m_is_motion_plus_attached;
+  const auto set_section_visible = [this](QWidget* widget, const std::string& key, bool visible) {
+    widget->setVisible(visible && IsVisibilitySectionUserVisible(key));
+  };
+  const auto set_buttons_visible = [this, &set_section_visible](bool remote, bool nunchuk,
+                                                                bool classic) {
+    set_section_visible(m_remote_buttons_box, SECTION_WII_BUTTONS, remote);
+    set_section_visible(m_nunchuk_buttons_box, SECTION_WII_BUTTONS, nunchuk);
+    set_section_visible(m_classic_buttons_box, SECTION_WII_BUTTONS, classic);
+  };
 
   if (m_active_extension == WiimoteEmu::ExtensionNumber::NUNCHUK)
   {
     setWindowTitle(tr("Wii TAS Input %1 - Wii Remote + Nunchuk").arg(m_num + 1));
-    m_ir_box->show();
-    m_nunchuk_stick_box->show();
-    m_classic_right_stick_box->hide();
-    m_classic_left_stick_box->hide();
-    m_remote_accelerometer_box->show();
-    m_remote_gyroscope_box->setVisible(show_motion_plus_controls);
-    m_nunchuk_accelerometer_box->show();
-    m_triggers_box->hide();
-    m_nunchuk_buttons_box->show();
-    m_remote_buttons_box->show();
-    m_classic_buttons_box->hide();
+    set_section_visible(m_ir_box, SECTION_WII_IR, true);
+    set_section_visible(m_nunchuk_stick_box, SECTION_WII_NUNCHUK_STICK, true);
+    set_section_visible(m_classic_right_stick_box, SECTION_WII_CLASSIC_RIGHT_STICK, false);
+    set_section_visible(m_classic_left_stick_box, SECTION_WII_CLASSIC_LEFT_STICK, false);
+    set_section_visible(m_remote_accelerometer_box, SECTION_WII_REMOTE_ACCELEROMETER, true);
+    set_section_visible(m_remote_gyroscope_box, SECTION_WII_REMOTE_GYROSCOPE,
+                        show_motion_plus_controls);
+    set_section_visible(m_nunchuk_accelerometer_box, SECTION_WII_NUNCHUK_ACCELEROMETER, true);
+    set_section_visible(m_triggers_box, SECTION_WII_TRIGGERS, false);
+    set_buttons_visible(true, true, false);
   }
   else if (m_active_extension == WiimoteEmu::ExtensionNumber::CLASSIC)
   {
     setWindowTitle(tr("Wii TAS Input %1 - Classic Controller").arg(m_num + 1));
-    m_ir_box->hide();
-    m_nunchuk_stick_box->hide();
-    m_classic_right_stick_box->show();
-    m_classic_left_stick_box->show();
-    m_remote_accelerometer_box->hide();
-    m_remote_gyroscope_box->hide();
-    m_nunchuk_accelerometer_box->hide();
-    m_triggers_box->show();
-    m_remote_buttons_box->hide();
-    m_nunchuk_buttons_box->hide();
-    m_classic_buttons_box->show();
+    set_section_visible(m_ir_box, SECTION_WII_IR, false);
+    set_section_visible(m_nunchuk_stick_box, SECTION_WII_NUNCHUK_STICK, false);
+    set_section_visible(m_classic_right_stick_box, SECTION_WII_CLASSIC_RIGHT_STICK, true);
+    set_section_visible(m_classic_left_stick_box, SECTION_WII_CLASSIC_LEFT_STICK, true);
+    set_section_visible(m_remote_accelerometer_box, SECTION_WII_REMOTE_ACCELEROMETER, false);
+    set_section_visible(m_remote_gyroscope_box, SECTION_WII_REMOTE_GYROSCOPE, false);
+    set_section_visible(m_nunchuk_accelerometer_box, SECTION_WII_NUNCHUK_ACCELEROMETER, false);
+    set_section_visible(m_triggers_box, SECTION_WII_TRIGGERS, true);
+    set_buttons_visible(false, false, true);
   }
   else
   {
     setWindowTitle(tr("Wii TAS Input %1 - Wii Remote").arg(m_num + 1));
-    m_ir_box->show();
-    m_nunchuk_stick_box->hide();
-    m_classic_right_stick_box->hide();
-    m_classic_left_stick_box->hide();
-    m_remote_accelerometer_box->show();
-    m_remote_gyroscope_box->setVisible(show_motion_plus_controls);
-    m_nunchuk_accelerometer_box->hide();
-    m_triggers_box->hide();
-    m_remote_buttons_box->show();
-    m_nunchuk_buttons_box->hide();
-    m_classic_buttons_box->hide();
+    set_section_visible(m_ir_box, SECTION_WII_IR, true);
+    set_section_visible(m_nunchuk_stick_box, SECTION_WII_NUNCHUK_STICK, false);
+    set_section_visible(m_classic_right_stick_box, SECTION_WII_CLASSIC_RIGHT_STICK, false);
+    set_section_visible(m_classic_left_stick_box, SECTION_WII_CLASSIC_LEFT_STICK, false);
+    set_section_visible(m_remote_accelerometer_box, SECTION_WII_REMOTE_ACCELEROMETER, true);
+    set_section_visible(m_remote_gyroscope_box, SECTION_WII_REMOTE_GYROSCOPE,
+                        show_motion_plus_controls);
+    set_section_visible(m_nunchuk_accelerometer_box, SECTION_WII_NUNCHUK_ACCELEROMETER, false);
+    set_section_visible(m_triggers_box, SECTION_WII_TRIGGERS, false);
+    set_buttons_visible(true, false, false);
   }
+
+  m_settings_box->setVisible(IsVisibilitySectionUserVisible(SECTION_WII_SETTINGS));
+  if (m_battery_box)
+    m_battery_box->setVisible(IsVisibilitySectionUserVisible(SECTION_WII_BATTERY));
+  if (m_reset_box)
+    m_reset_box->setVisible(IsVisibilitySectionUserVisible(SECTION_WII_RESET));
+  if (m_favorites_widget)
+    m_favorites_widget->setVisible(IsVisibilitySectionUserVisible(SECTION_WII_FAVORITE_SCRIPTS));
 
   UpdateFavoritesWidgetHeight();
 

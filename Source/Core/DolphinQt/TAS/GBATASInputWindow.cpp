@@ -3,6 +3,8 @@
 
 #include "DolphinQt/TAS/GBATASInputWindow.h"
 
+#include <string>
+
 #include <QCheckBox>
 #include <QGridLayout>
 #include <QGroupBox>
@@ -16,7 +18,9 @@
 #include "Core/Movie.h"
 #include "Core/System.h"
 
+#include "DolphinQt/Scripting/ScriptFavoritesWidget.h"
 #include "DolphinQt/TAS/TASCheckBox.h"
+#include "DolphinQt/TAS/TASSpinBox.h"
 
 #include "InputCommon/ControllerEmu/ControllerEmu.h"
 #include "InputCommon/InputConfig.h"
@@ -25,6 +29,10 @@ GBATASInputWindow::GBATASInputWindow(QWidget* parent, int controller_id)
     : TASInputWindow(parent), m_controller_id(controller_id)
 {
   setWindowTitle(tr("GBA TAS Input %1").arg(controller_id + 1));
+  SetAlwaysOnTopConfigKey("GBA.AlwaysOnTop." + std::to_string(controller_id));
+  m_turbo_press_frames->setValue(1);
+  m_turbo_release_frames->setValue(1);
+  m_toggle_lines->hide();
 
   m_b_button =
       CreateButton(QStringLiteral("&B"), GBAPad::BUTTONS_GROUP, GBAPad::B_BUTTON, &m_overrider);
@@ -67,19 +75,34 @@ GBATASInputWindow::GBATASInputWindow(QWidget* parent, int controller_id)
   QGroupBox* buttons_box = new QGroupBox(tr("Buttons"));
   buttons_box->setLayout(buttons_layout);
 
-  m_disconnect_checkbox = new QCheckBox(tr("Disconnect link cable"));
+  auto* favorites_widget = new ScriptFavoritesWidget(this);
+  favorites_widget->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Preferred);
+  favorites_widget->setFixedHeight(buttons_box->sizeHint().height());
+
+  m_disconnect_checkbox = new QCheckBox(tr("Disconnect"));
   m_disconnect_checkbox->setToolTip(
       tr("While checked, the GBA link cable is force-disconnected for this port during "
          "recording/playback."));
   connect(m_disconnect_checkbox, &QCheckBox::toggled, this,
           [this](bool checked) { Pad::SetGBAForceDisconnect(m_controller_id, checked); });
-  m_settings_box->layout()->addWidget(m_disconnect_checkbox);
+  buttons_layout->addWidget(m_disconnect_checkbox, 3, 0, 1, 4);
+  favorites_widget->setFixedHeight(buttons_box->sizeHint().height());
+
+  auto* buttons_and_favorites = new QHBoxLayout;
+  buttons_and_favorites->setAlignment(Qt::AlignTop);
+  buttons_and_favorites->addWidget(buttons_box, 1, Qt::AlignTop);
+  buttons_and_favorites->addWidget(favorites_widget, 0, Qt::AlignTop);
 
   auto* layout = new QVBoxLayout;
-  layout->addWidget(buttons_box);
+  layout->addLayout(buttons_and_favorites);
   layout->addWidget(m_settings_box);
 
-  setLayout(layout);
+  SetResizableContentLayout(layout);
+
+  RegisterVisibilitySection(tr("Buttons"), "GBA.Buttons", buttons_box);
+  RegisterVisibilitySection(tr("Settings"), "GBA.Settings", m_settings_box);
+  RegisterVisibilitySection(tr("Favorite Scripts"), "GBA.FavoriteScripts", favorites_widget);
+  FinalizeVisibilitySections();
 }
 
 void GBATASInputWindow::hideEvent(QHideEvent* event)

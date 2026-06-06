@@ -147,6 +147,7 @@ static_assert(sizeof(DTMHeader) == 256, "DTMHeader should be 256 bytes");
 struct GCRuntimeFrameSnapshot
 {
   std::array<bool, 4> active_controllers{};
+  std::array<bool, 4> active_gba_controllers{};
   std::vector<std::array<ControllerState, 4>> rows;
   std::vector<std::optional<u64>> row_game_frames;
   u64 current_frame = 0;
@@ -159,6 +160,7 @@ struct GCRuntimeFrameSnapshot
 struct GCRuntimeFrameMetadata
 {
   std::array<bool, 4> active_controllers{};
+  std::array<bool, 4> active_gba_controllers{};
   u64 row_count = 0;
   u64 current_frame = 0;
   u64 current_input_row = 0;

@@ -32,6 +32,7 @@
 #include "VideoCommon/VertexManagerBase.h"
 #include "VideoCommon/VideoConfig.h"
 
+#include <algorithm>
 #include <inttypes.h>
 #include <mutex>
 
@@ -308,19 +309,31 @@ void OnScreenUI::DrawDebugText()
                                           ImGui::GetIO().DisplaySize);
     }
 
+    if (use_legacy_info_display)
+    {
+      ImGui::PushFont(nullptr, static_cast<float>(std::max(
+                                  1, Config::Get(
+                                         Config::MAIN_MOVIE_LEGACY_INPUT_DISPLAY_SIZE))));
+    }
+
     if (ImGui::Begin("Movie", nullptr, window_flags))
     {
       auto& movie = Core::System::GetInstance().GetMovie();
-      const ImVec4 cyan = ImVec4(0.0f, 1.0f, 1.0f, 1.0f);
-      const auto text = [use_legacy_info_display, cyan](const char* fmt, auto... args) {
+      const u32 legacy_color_value = Config::Get(Config::MAIN_MOVIE_LEGACY_INPUT_DISPLAY_COLOR);
+      const ImVec4 legacy_color =
+          ImVec4(static_cast<float>((legacy_color_value >> 16) & 0xff) / 255.0f,
+                 static_cast<float>((legacy_color_value >> 8) & 0xff) / 255.0f,
+                 static_cast<float>(legacy_color_value & 0xff) / 255.0f, 1.0f);
+      const auto text = [use_legacy_info_display, legacy_color](const char* fmt, auto... args) {
         if (use_legacy_info_display)
-          ImGui::TextColored(cyan, fmt, args...);
+          ImGui::TextColored(legacy_color, fmt, args...);
         else
           ImGui::Text(fmt, args...);
       };
-      const auto text_unformatted = [use_legacy_info_display, cyan](const std::string& value) {
+      const auto text_unformatted = [use_legacy_info_display,
+                                     legacy_color](const std::string& value) {
         if (use_legacy_info_display)
-          ImGui::TextColored(cyan, "%s", value.c_str());
+          ImGui::TextColored(legacy_color, "%s", value.c_str());
         else
           ImGui::TextUnformatted(value.c_str());
       };
@@ -359,6 +372,9 @@ void OnScreenUI::DrawDebugText()
         text_unformatted(movie.GetRerecords());
     }
     ImGui::End();
+
+    if (use_legacy_info_display)
+      ImGui::PopFont();
   }
 
   if (g_ActiveConfig.bOverlayStats)
