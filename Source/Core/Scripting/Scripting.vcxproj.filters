@@ -14,6 +14,9 @@
     <ClCompile Include="Python\Modules\dolphinmodule.cpp">
       <Filter>Python\Modules</Filter>
     </ClCompile>
+    <ClCompile Include="Python\Modules\dtmmodule.cpp">
+      <Filter>Python\Modules</Filter>
+    </ClCompile>
     <ClCompile Include="Python\Modules\eventmodule.cpp">
       <Filter>Python\Modules</Filter>
     </ClCompile>
@@ -58,6 +61,9 @@
       <Filter>Python\Modules</Filter>
     </ClInclude>
     <ClInclude Include="Python\Modules\dolphinmodule.h">
+      <Filter>Python\Modules</Filter>
+    </ClInclude>
+    <ClInclude Include="Python\Modules\dtmmodule.h">
       <Filter>Python\Modules</Filter>
     </ClInclude>
     <ClInclude Include="Python\Modules\eventmodule.h">

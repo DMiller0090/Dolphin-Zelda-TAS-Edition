@@ -52,7 +52,7 @@ private:
   // creation and deletion of this class handles the bookkeeping of python's
   // main- and sub-interpreters. None of that can safely run concurrently.
   static std::mutex s_bookkeeping_lock;
-  PyThreadState* m_interp_threadstate;
+  PyThreadState* m_interp_threadstate = nullptr;
   API::EventHub& m_event_hub;
   API::Gui& m_gui;
   API::GCManip& m_gc_manip;

@@ -32,6 +32,7 @@ public:
   }
   ~BaseManip() { m_event_hub.UnlistenEvent(m_frame_advanced_listener); }
   void Clear() { m_overrides.clear(); }
+  void Clear(int controller_id) { m_overrides.erase(controller_id); }
   void NotifyFrameAdvanced()
   {
     // std::erase_if back-ported to C++17
@@ -205,5 +206,6 @@ WiiMotionPlusManip& GetWiiMotionPlusManip();
 NunchuckButtonsManip& GetNunchuckButtonsManip();
 NunchuckAccelManip& GetNunchuckAccelManip();
 void ApplyManipToDesiredWiimoteState(int controller_id, WiimoteEmu::DesiredWiimoteState* state);
+void ClearAllControllerInputManipulations();
 
 }  // namespace API

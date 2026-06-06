@@ -3,12 +3,17 @@
 
 #pragma once
 
+#include <cstddef>
 #include <map>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include <QDialog>
+#include <QElapsedTimer>
+#include <QString>
 
 #include "Common/CommonTypes.h"
 
@@ -20,11 +25,13 @@ class QCheckBox;
 class QDialog;
 class QEvent;
 class QGroupBox;
-class QString;
+class QLayout;
+class QPoint;
 class StickWidget;
 class TASCheckBox;
 class TASSpinBox;
 class QTimer;
+class QWidget;
 
 class InputOverrider final
 {
@@ -75,8 +82,18 @@ protected:
   TASSpinBox* CreateSliderValuePair(QBoxLayout* layout, int default_, int max,
                                     QKeySequence shortcut_key_sequence, Qt::Orientation orientation,
                                     QWidget* shortcut_widget);
+  void SetResizableContentLayout(QLayout* content_layout);
+  void RegisterVisibilitySection(const QString& label, const std::string& key, QWidget* widget);
+  void RegisterVisibilitySection(const QString& label, const std::string& key,
+                                 std::vector<QWidget*> widgets);
+  void SetAlwaysOnTopConfigKey(std::string key);
+  void FinalizeVisibilitySections();
+  virtual void ApplyVisibilitySettings();
+  bool IsVisibilitySectionUserVisible(const std::string& key) const;
+  virtual bool IsVisibilitySectionAvailable(const std::string& key) const;
 
   void changeEvent(QEvent* event) override;
+  bool eventFilter(QObject* watched, QEvent* event) override;
 
   QGroupBox* m_settings_box;
   QCheckBox* m_use_controller;
@@ -85,11 +102,36 @@ protected:
   TASSpinBox* m_turbo_release_frames = nullptr;
 
 private:
+  struct VisibilitySection
+  {
+    QString label;
+    std::string key;
+    std::vector<QWidget*> widgets;
+  };
+
+  bool ShouldViewMovieInputs() const;
   void PollViewInputs();
+  void InstallOptionsMenu(QWidget* widget);
+  bool IsOptionsMenuTarget(QObject* watched) const;
+  bool ShouldOpenOptionsMenu(QEvent* event, QPoint* global_pos);
+  void ShowOptionsMenu(const QPoint& global_pos);
+  bool IsAlwaysOnTopEnabled() const;
+  void SetAlwaysOnTopEnabled(bool enabled);
+  void ApplyAlwaysOnTopWindowFlags(bool enabled);
+  std::string GetAlwaysOnTopConfigKey() const;
+  void SetVisibilitySectionVisible(std::size_t section_index, bool visible);
+  bool LoadVisibilitySectionVisible(const std::string& key) const;
+  void SaveVisibilitySectionVisible(const std::string& key, bool visible) const;
   std::optional<ControlState> GetButton(TASCheckBox* checkbox, ControlState controller_state);
   std::optional<ControlState> GetSpinBox(TASSpinBox* spin, int zero, int min, int max,
                                          ControlState controller_state);
   std::optional<ControlState> GetSpinBox(TASSpinBox* spin, int zero, ControlState controller_state,
                                          ControlState scale);
+  std::vector<VisibilitySection> m_visibility_sections;
+  Qt::WindowFlags m_default_window_flags;
+  std::string m_always_on_top_config_key;
+  QElapsedTimer m_options_menu_click_timer;
+  QPoint m_last_options_menu_click_pos;
+  bool m_has_pending_options_menu_click = false;
   QTimer* m_view_inputs_timer = nullptr;
 };

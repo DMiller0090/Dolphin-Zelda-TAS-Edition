@@ -37,6 +37,7 @@
 #include "UICommon/DiscordPresence.h"
 
 #include "VideoCommon/AbstractGfx.h"
+#include "VideoCommon/AsyncRequests.h"
 #include "VideoCommon/Fifo.h"
 #include "VideoCommon/Present.h"
 #include "VideoCommon/VideoConfig.h"
@@ -47,7 +48,16 @@ Host::Host()
     Host_UpdateDisasmDialog();
     Core::System::GetInstance().GetMovie().OnAfterStateLoad();
     if (g_presenter)
+    {
       g_presenter->SetMousePress(0);
+      if (Config::Get(Config::MAIN_MOVIE_USE_LEGACY_INPUT_DISPLAY))
+      {
+        AsyncRequests::GetInstance()->PushEvent([] {
+          if (g_presenter)
+            g_presenter->Present();
+        });
+      }
+    }
   });
 }
 

@@ -225,6 +225,7 @@ void EmulatePoint(MotionState* state, ControllerEmu::Cursor* ir_group,
                   const ControllerEmu::InputOverrideFunction& override_func, float time_elapsed)
 {
   const auto cursor = ir_group->GetState(true, override_func);
+  const bool cursor_was_hidden = state->position.y < 0;
 
   if (!cursor.IsVisible())
   {
@@ -252,9 +253,12 @@ void EmulatePoint(MotionState* state, ControllerEmu::Cursor* ir_group,
   state->acceleration = {};
 
   const auto target_angle = Common::Vec3(pitch_scale * -cursor.y, 0, yaw_scale * -cursor.x);
+  const bool instant_point =
+      override_func &&
+      override_func(ir_group->name, Wiimote::IR_INSTANT_POINT_OVERRIDE, 0.0).value_or(0.0) > 0.5;
 
   // If cursor was hidden, jump to the target angle immediately.
-  if (state->position.y < 0)
+  if (cursor_was_hidden || instant_point)
   {
     state->angle = target_angle;
     state->angular_velocity = {};

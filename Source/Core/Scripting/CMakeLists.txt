@@ -15,6 +15,8 @@ add_library(scripting
   Python/Modules/doliomodule.h
   Python/Modules/dolphinmodule.cpp
   Python/Modules/dolphinmodule.h
+  Python/Modules/dtmmodule.cpp
+  Python/Modules/dtmmodule.h
   Python/Modules/eventmodule.cpp
   Python/Modules/eventmodule.h
   Python/Modules/guimodule.cpp
@@ -53,6 +55,16 @@ set(DOLPHIN_PYTHON_RUNTIME_LIBRARY "${DOLPHIN_PYTHON_RUNTIME_LIBRARY}" CACHE INT
     "Python runtime DLL used by Dolphin scripting")
 set(DOLPHIN_PYTHON_RUNTIME_FILENAME "python${Python3_VERSION_MAJOR}${Python3_VERSION_MINOR}.dll"
     CACHE INTERNAL "Python runtime DLL filename used by Dolphin scripting")
+set(DOLPHIN_PYTHON_ZIP "${DOLPHIN_PYTHON_ZIP}" CACHE INTERNAL
+    "Python standard library zip filename used by Dolphin scripting")
+set(DOLPHIN_PYTHON_HOME "${DOLPHIN_PYTHON_HOME}" CACHE INTERNAL
+    "Python home used by Dolphin scripting")
+set(DOLPHIN_PYTHON_DLLS "${DOLPHIN_PYTHON_DLLS}" CACHE INTERNAL
+    "Python DLLs directory used by Dolphin scripting")
+set(DOLPHIN_PYTHON_STDLIB "${DOLPHIN_PYTHON_STDLIB}" CACHE INTERNAL
+    "Python standard library used by Dolphin scripting")
+set(DOLPHIN_PYTHON_SITE_PACKAGES "${DOLPHIN_PYTHON_SITE_PACKAGES}" CACHE INTERNAL
+    "Python site-packages directory used by Dolphin scripting")
 
 target_include_directories(scripting PRIVATE ${Python3_INCLUDE_DIRS})
 target_compile_definitions(scripting PRIVATE
@@ -63,4 +75,8 @@ target_compile_definitions(scripting PRIVATE
   DOLPHIN_PYTHON_ZIP="${DOLPHIN_PYTHON_ZIP}"
 )
 # TODO imgui shouldn't be here
-target_link_libraries(scripting PRIVATE Python3::Python imgui core nfd)
+target_link_libraries(scripting PRIVATE Python3::Python imgui core)
+
+if(WIN32)
+  target_link_libraries(scripting PRIVATE Comdlg32)
+endif()

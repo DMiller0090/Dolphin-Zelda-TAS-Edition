@@ -519,6 +519,14 @@ const Info<bool> MAIN_MOVIE_SHOW_INPUT_DISPLAY{{System::Main, "Movie", "ShowInpu
 const Info<bool> MAIN_MOVIE_USE_LEGACY_INPUT_DISPLAY{{System::Main, "Movie",
                                                       "UseLegacyInputDisplay"},
                                                      false};
+const Info<bool> MAIN_MOVIE_TURBO_VISUALIZER{{System::Main, "Movie", "TurboVisualizer"},
+                                             false};
+const Info<u32> MAIN_MOVIE_LEGACY_INPUT_DISPLAY_COLOR{{System::Main, "Movie",
+                                                       "LegacyInputDisplayColor"},
+                                                      0x00ffff};
+const Info<int> MAIN_MOVIE_LEGACY_INPUT_DISPLAY_SIZE{{System::Main, "Movie",
+                                                      "LegacyInputDisplaySize"},
+                                                     13};
 const Info<bool> MAIN_MOVIE_SHOW_RTC{{System::Main, "Movie", "ShowRTC"}, false};
 const Info<bool> MAIN_MOVIE_SHOW_RERECORD{{System::Main, "Movie", "ShowRerecord"}, false};
 const Info<bool> MAIN_MOVIE_SHOW_OSD{{System::Main, "Movie", "ShowMovieWindow"}, false};

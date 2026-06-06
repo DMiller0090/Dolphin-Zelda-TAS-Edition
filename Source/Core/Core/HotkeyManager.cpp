@@ -48,6 +48,7 @@ constexpr std::array<const char*, NUM_HOTKEYS> s_hotkey_labels{{
     _trans("Disable Emulation Speed Limit"),
 
     _trans("Frame Advance"),
+    _trans("60fps Frame Advance"),
     _trans("Frame Advance Decrease Speed"),
     _trans("Frame Advance Increase Speed"),
     _trans("Frame Advance Reset Speed"),

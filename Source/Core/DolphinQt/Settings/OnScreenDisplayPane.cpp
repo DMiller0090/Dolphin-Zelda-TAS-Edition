@@ -3,9 +3,13 @@
 
 #include "DolphinQt/Settings/OnScreenDisplayPane.h"
 
+#include <QColorDialog>
+#include <QEvent>
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QLabel>
+#include <QMouseEvent>
+#include <QPushButton>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -14,6 +18,21 @@
 
 #include "DolphinQt/Config/ConfigControls/ConfigBool.h"
 #include "DolphinQt/Config/ConfigControls/ConfigInteger.h"
+
+namespace
+{
+QColor GetLegacyInputDisplayColor()
+{
+  const u32 color = Config::Get(Config::MAIN_MOVIE_LEGACY_INPUT_DISPLAY_COLOR);
+  return QColor::fromRgb((color >> 16) & 0xff, (color >> 8) & 0xff, color & 0xff);
+}
+
+u32 PackLegacyInputDisplayColor(const QColor& color)
+{
+  return (static_cast<u32>(color.red()) << 16) | (static_cast<u32>(color.green()) << 8) |
+         static_cast<u32>(color.blue());
+}
+}  // namespace
 
 OnScreenDisplayPane::OnScreenDisplayPane(QWidget* parent) : QWidget(parent)
 {
@@ -74,6 +93,15 @@ void OnScreenDisplayPane::CreateLayout()
   m_frame_counter = new ConfigBool(tr("Show Frame Counter"), Config::MAIN_SHOW_FRAME_COUNT);
   m_input_display = new ConfigBool(tr("Show Input Display"), Config::MAIN_MOVIE_SHOW_INPUT_DISPLAY);
   m_system_clock = new ConfigBool(tr("Show System Clock"), Config::MAIN_MOVIE_SHOW_RTC);
+  m_legacy_input_display_color = new QPushButton;
+  m_legacy_input_display_color->installEventFilter(this);
+  UpdateLegacyInputDisplayColorButton();
+  m_legacy_input_display_size =
+      new ConfigInteger(1, 100, Config::MAIN_MOVIE_LEGACY_INPUT_DISPLAY_SIZE);
+  m_legacy_input_display_size->SetTitle(tr("Legacy Input Display Size"));
+  m_legacy_input_display_size->installEventFilter(this);
+  for (QWidget* child : m_legacy_input_display_size->findChildren<QWidget*>())
+    child->installEventFilter(this);
 
   movie_layout->addWidget(m_movie_window, 0, 0);
   movie_layout->addWidget(m_rerecord_counter, 1, 0);
@@ -81,6 +109,10 @@ void OnScreenDisplayPane::CreateLayout()
   movie_layout->addWidget(m_frame_counter, 2, 0);
   movie_layout->addWidget(m_input_display, 2, 1);
   movie_layout->addWidget(m_system_clock, 3, 0);
+  movie_layout->addWidget(new QLabel(tr("Legacy input display color:")), 4, 0);
+  movie_layout->addWidget(m_legacy_input_display_color, 4, 1);
+  movie_layout->addWidget(new QLabel(tr("Legacy Input Display Size:")), 5, 0);
+  movie_layout->addWidget(m_legacy_input_display_size, 5, 1);
 
   // NetPlay
   auto* netplay_box = new QGroupBox(tr("Netplay"));
@@ -131,6 +163,59 @@ void OnScreenDisplayPane::ConnectLayout()
   connect(m_movie_window, &QCheckBox::toggled, this, [this, enable_movie_items](bool checked) {
     enable_movie_items(m_movie_window->isChecked());
   });
+
+  connect(m_legacy_input_display_color, &QPushButton::clicked, this, [this] {
+    const QColor color =
+        QColorDialog::getColor(GetLegacyInputDisplayColor(), this, tr("Legacy input display color"));
+    if (!color.isValid())
+      return;
+
+    Config::SetBaseOrCurrent(Config::MAIN_MOVIE_LEGACY_INPUT_DISPLAY_COLOR,
+                             PackLegacyInputDisplayColor(color));
+    UpdateLegacyInputDisplayColorButton();
+  });
+}
+
+void OnScreenDisplayPane::UpdateLegacyInputDisplayColorButton()
+{
+  const QColor color = GetLegacyInputDisplayColor();
+  const QString background = color.name(QColor::HexRgb);
+  const QString foreground = color.lightness() < 128 ? QStringLiteral("#ffffff") :
+                                                       QStringLiteral("#000000");
+
+  m_legacy_input_display_color->setText(background.toUpper());
+  m_legacy_input_display_color->setStyleSheet(
+      QStringLiteral("QPushButton { background-color: %1; color: %2; }")
+          .arg(background, foreground));
+}
+
+bool OnScreenDisplayPane::eventFilter(QObject* object, QEvent* event)
+{
+  if (event->type() != QEvent::MouseButtonPress)
+    return QWidget::eventFilter(object, event);
+
+  const auto* mouse_event = static_cast<QMouseEvent*>(event);
+  if (mouse_event->button() != Qt::RightButton)
+    return QWidget::eventFilter(object, event);
+
+  const auto* widget = qobject_cast<QWidget*>(object);
+  if (object == m_legacy_input_display_color)
+  {
+    Config::SetBaseOrCurrent(Config::MAIN_MOVIE_LEGACY_INPUT_DISPLAY_COLOR,
+                             Config::MAIN_MOVIE_LEGACY_INPUT_DISPLAY_COLOR.GetDefaultValue());
+    UpdateLegacyInputDisplayColorButton();
+    return true;
+  }
+
+  if (object == m_legacy_input_display_size ||
+      (widget && m_legacy_input_display_size->isAncestorOf(widget)))
+  {
+    Config::SetBaseOrCurrent(Config::MAIN_MOVIE_LEGACY_INPUT_DISPLAY_SIZE,
+                             Config::MAIN_MOVIE_LEGACY_INPUT_DISPLAY_SIZE.GetDefaultValue());
+    return true;
+  }
+
+  return QWidget::eventFilter(object, event);
 }
 
 void OnScreenDisplayPane::AddDescriptions()
@@ -210,6 +295,10 @@ void OnScreenDisplayPane::AddDescriptions()
   static const char TR_SYSTEM_CLOCK_DESCRIPTION[] =
       QT_TR_NOOP("Shows current system time.<br><br><dolphin_emphasis>If unsure, leave "
                  "this unchecked.</dolphin_emphasis>");
+  static const char TR_LEGACY_INPUT_DISPLAY_SIZE_DESCRIPTION[] =
+      QT_TR_NOOP("Changes the font size of the legacy input display."
+                 "<br><br>Right-click to reset this to the original size."
+                 "<br><br><dolphin_emphasis>If unsure, leave this at 13.</dolphin_emphasis>");
 
   static const char TR_SHOW_STATS_DESCRIPTION[] =
       QT_TR_NOOP("Shows various rendering statistics.<br><br><dolphin_emphasis>If unsure, "
@@ -239,6 +328,7 @@ void OnScreenDisplayPane::AddDescriptions()
   m_frame_counter->SetDescription(tr(TR_FRAME_COUNTER_DESCRIPTION));
   m_input_display->SetDescription(tr(TR_INPUT_DISPLAY_DESCRIPTION));
   m_system_clock->SetDescription(tr(TR_SYSTEM_CLOCK_DESCRIPTION));
+  m_legacy_input_display_size->SetDescription(tr(TR_LEGACY_INPUT_DISPLAY_SIZE_DESCRIPTION));
 
   m_show_statistics->SetDescription(tr(TR_SHOW_STATS_DESCRIPTION));
   m_show_proj_statistics->SetDescription(tr(TR_SHOW_PROJ_STATS_DESCRIPTION));

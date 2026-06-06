@@ -9,6 +9,7 @@
 #include <mgba/core/interface.h>
 #undef PYCPARSE
 #include <mgba-util/vfs.h>
+#include <mgba/core/blip_buf.h>
 #include <mgba/core/log.h>
 #include <mgba/core/timing.h>
 #include <mgba/internal/gb/gb.h>
@@ -37,7 +38,6 @@
 #include "Core/Core.h"
 #include "Core/HW/SystemTimers.h"
 #include "Core/Host.h"
-#include "Core/Movie.h"
 #include "Core/NetPlayProto.h"
 #include "Core/System.h"
 
@@ -50,6 +50,7 @@ mLogger s_stub_logger = {
 }  // namespace
 
 constexpr size_t AUDIO_BUFFER_SIZE = 512;
+constexpr auto SAMPLE_RATE = 48000;
 
 // libmGBA does not return the correct frequency for some GB models
 static u32 GetCoreFrequency(mCore* core)
@@ -161,15 +162,6 @@ static std::array<u8, 20> GetROMHash(VFile* rom)
   return digest;
 }
 
-static void ForceJoybusMode(mCore* core)
-{
-  if (!core || core->platform(core) != mPLATFORM_GBA)
-    return;
-
-  auto& sio = static_cast<::GBA*>(core->board)->sio;
-  GBASIOWriteRCNT(&sio, 0xC000);
-}
-
 Core::Core(::Core::System& system, int device_number)
     : m_device_number(device_number), m_system(system)
 {
@@ -236,9 +228,9 @@ bool Core::Start(u64 gc_ticks)
     }
     rom_guard.Dismiss();
 
-    mGameInfo info;
-    m_core->getGameInfo(m_core, &info);
-    m_game_title = info.title;
+    std::array<char, 17> game_title{};
+    m_core->getGameTitle(m_core, game_title.data());
+    m_game_title = game_title.data();
 
     m_save_path = NetPlay::IsNetPlayRunning() ? NetPlay::GetGBASavePath(m_device_number) :
                                                 GetSavePath(m_rom_path, m_device_number);
@@ -252,13 +244,12 @@ bool Core::Start(u64 gc_ticks)
 
   SetSIODriver();
   SetVideoBuffer();
-  SetAudioBufferSize();
+  SetSampleRates();
   AddCallbacks();
   SetAVStream();
   SetupEvent();
 
   m_core->reset(m_core);
-  ForceJoybusMode(m_core);
   m_started = true;
   start_guard.Dismiss();
   // Notify the host and handle a dimension change if that happened after reset()
@@ -307,7 +298,6 @@ void Core::Reset()
     return;
 
   m_core->reset(m_core);
-  ForceJoybusMode(m_core);
 }
 
 bool Core::IsStarted() const
@@ -404,25 +394,18 @@ void Core::SetSIODriver()
   if (m_core->platform(m_core) != mPLATFORM_GBA)
     return;
 
+  GBASIOJOYCreate(&m_sio_driver);
+  GBASIOSetDriver(&static_cast<::GBA*>(m_core->board)->sio, &m_sio_driver, SIO_JOYBUS);
+
   m_sio_driver.core = this;
-  m_sio_driver.init = [](GBASIODriver* driver) {
+  m_sio_driver.load = [](GBASIODriver* driver) {
     static_cast<SIODriver*>(driver)->core->m_link_enabled = true;
     return true;
   };
-  m_sio_driver.deinit = [](GBASIODriver* driver) {
+  m_sio_driver.unload = [](GBASIODriver* driver) {
     static_cast<SIODriver*>(driver)->core->m_link_enabled = false;
+    return true;
   };
-  m_sio_driver.reset = [](GBASIODriver* driver) {
-    static_cast<SIODriver*>(driver)->core->m_link_enabled = true;
-  };
-  m_sio_driver.setMode = [](GBASIODriver* driver, GBASIOMode mode) {
-    static_cast<SIODriver*>(driver)->core->m_link_enabled = true;
-  };
-  m_sio_driver.handlesMode = [](GBASIODriver*, GBASIOMode mode) { return mode == GBA_SIO_JOYBUS; };
-  m_sio_driver.connectedDevices = [](GBASIODriver*) { return 1; };
-
-  GBASIOSetDriver(&static_cast<::GBA*>(m_core->board)->sio, &m_sio_driver);
-  m_link_enabled = true;
 }
 
 void Core::SetVideoBuffer()
@@ -435,9 +418,15 @@ void Core::SetVideoBuffer()
     host->GameChanged();
 }
 
-void Core::SetAudioBufferSize()
+void Core::SetSampleRates()
 {
   m_core->setAudioBufferSize(m_core, AUDIO_BUFFER_SIZE);
+  blip_set_rates(m_core->getAudioChannel(m_core, 0), m_core->frequency(m_core), SAMPLE_RATE);
+  blip_set_rates(m_core->getAudioChannel(m_core, 1), m_core->frequency(m_core), SAMPLE_RATE);
+
+  auto* const sound_stream = m_system.GetSoundStream();
+  sound_stream->GetMixer()->SetGBAInputSampleRateDivisors(
+      m_device_number, Mixer::FIXED_SAMPLE_RATE_DIVIDEND / SAMPLE_RATE);
 }
 
 void Core::AddCallbacks()
@@ -464,26 +453,14 @@ void Core::SetAVStream()
     auto core = static_cast<AVStream*>(stream)->core;
     core->SetVideoBuffer();
   };
-  m_stream.audioRateChanged = [](mAVStream* stream, unsigned rate) {
-    auto* core = static_cast<AVStream*>(stream)->core;
+  m_stream.postAudioBuffer = [](mAVStream* stream, blip_t* left, blip_t* right) {
+    auto* const core = static_cast<AVStream*>(stream)->core;
+    std::vector<s16> buffer(AUDIO_BUFFER_SIZE * 2);
+    blip_read_samples(left, &buffer[0], AUDIO_BUFFER_SIZE, 1);
+    blip_read_samples(right, &buffer[1], AUDIO_BUFFER_SIZE, 1);
+
     auto* const sound_stream = core->m_system.GetSoundStream();
-    sound_stream->GetMixer()->SetGBAInputSampleRateDivisors(
-        core->m_device_number, Mixer::FIXED_SAMPLE_RATE_DIVIDEND / rate);
-  };
-  m_stream.postAudioBuffer = [](mAVStream* stream, mAudioBuffer* audio_buffer) {
-    size_t sample_count = mAudioBufferAvailable(audio_buffer);
-    const size_t required_buffer_size = sample_count * audio_buffer->channels;
-
-    auto* const av_stream = static_cast<AVStream*>(stream);
-    if (required_buffer_size > av_stream->sample_buffer.size())
-      av_stream->sample_buffer.reset(required_buffer_size);
-
-    sample_count = mAudioBufferRead(audio_buffer, av_stream->sample_buffer.data(), sample_count);
-
-    auto* const core = av_stream->core;
-    auto* const sound_stream = core->m_system.GetSoundStream();
-    sound_stream->GetMixer()->PushGBASamples(core->m_device_number, av_stream->sample_buffer.data(),
-                                             sample_count);
+    sound_stream->GetMixer()->PushGBASamples(core->m_device_number, &buffer[0], AUDIO_BUFFER_SIZE);
   };
   m_core->setAVStream(m_core, &m_stream);
 }
@@ -580,8 +557,7 @@ void Core::RunCommand(Command& command)
   if (!command.sync_only)
   {
     m_response.clear();
-    const bool allow_movie_compat_link = m_system.GetMovie().IsPlayingInput();
-    if ((m_link_enabled || allow_movie_compat_link) && !m_force_disconnect)
+    if (m_link_enabled && !m_force_disconnect)
     {
       int recvd = GBASIOJOYSendCommand(
           &m_sio_driver, static_cast<GBASIOJOYCommand>(command.buffer[0]), &command.buffer[1]);
@@ -643,7 +619,6 @@ void Core::ImportState(std::string_view state_path)
 
   file.ReadBytes(core_state.data(), core_state.size());
   m_core->loadState(m_core, core_state.data());
-  ForceJoybusMode(m_core);
 }
 
 void Core::ExportState(std::string_view state_path)
@@ -672,7 +647,6 @@ void Core::ImportSave(std::string_view save_path)
 
   m_core->savedataRestore(m_core, save_file.data(), save_file.size(), true);
   m_core->reset(m_core);
-  ForceJoybusMode(m_core);
 }
 
 void Core::ExportSave(std::string_view save_path)
@@ -741,7 +715,6 @@ void Core::DoState(PointerWrap& p)
   if (p.IsReadMode() && m_core->stateSize(m_core) == core_state.size())
   {
     m_core->loadState(m_core, core_state.data());
-    ForceJoybusMode(m_core);
     if (auto host = m_host.lock())
       host->FrameEnded(m_video_buffer);
   }
@@ -768,9 +741,9 @@ bool Core::GetRomInfo(const char* rom_path, std::array<u8, 20>& hash, std::strin
     return false;
   }
 
-  mGameInfo info;
-  core->getGameInfo(core, &info);
-  title = info.title;
+  std::array<char, 17> game_title{};
+  core->getGameTitle(core, game_title.data());
+  title = game_title.data();
 
   core->deinit(core);
   return true;

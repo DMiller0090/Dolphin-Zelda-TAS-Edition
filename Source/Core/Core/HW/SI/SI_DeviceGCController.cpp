@@ -119,7 +119,6 @@ int CSIDevice_GCController::RunBuffer(u8* buffer, int request_length)
 void CSIDevice_GCController::HandleMoviePadStatus(Movie::MovieManager& movie, int device_number,
                                                   GCPadStatus* pad_status)
 {
-  API::GetGCManip().PerformInputManip(pad_status, device_number);
   movie.SetPolledDevice();
   if (NetPlay_GetInput(device_number, pad_status))
   {
@@ -127,16 +126,21 @@ void CSIDevice_GCController::HandleMoviePadStatus(Movie::MovieManager& movie, in
   else if (movie.IsPlayingInput())
   {
     movie.PlayController(pad_status, device_number);
-    movie.InputUpdate();
-  }
-  else if (movie.IsRecordingInput())
-  {
-    movie.RecordInput(pad_status, device_number);
+    API::GetGCManip().PerformInputManip(pad_status, device_number);
     movie.InputUpdate();
   }
   else
   {
-    movie.CheckPadStatus(pad_status, device_number);
+    API::GetGCManip().PerformInputManip(pad_status, device_number);
+    if (movie.IsRecordingInput())
+    {
+      movie.RecordInput(pad_status, device_number);
+      movie.InputUpdate();
+    }
+    else
+    {
+      movie.CheckPadStatus(pad_status, device_number);
+    }
   }
 }
 

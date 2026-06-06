@@ -3,6 +3,9 @@
 
 #pragma once
 
+#include <array>
+#include <vector>
+
 #include <QDialog>
 
 #include "Core/HW/WiimoteEmu/DesiredWiimoteState.h"
@@ -13,10 +16,15 @@ class QGroupBox;
 class QLabel;
 class QObject;
 class QPushButton;
+class QEvent;
+class QPoint;
+class QRubberBand;
+class QShowEvent;
 class QSpinBox;
 class QStackedWidget;
 class QTableView;
 class QTimer;
+class QHideEvent;
 class DTMEditorModel;
 
 class DTMEditorDialog final : public QDialog
@@ -30,6 +38,12 @@ public:
   void PromptOpen();
 
 private:
+  struct InputCell
+  {
+    int row = -1;
+    int column = -1;
+  };
+
   enum class EditorMovieKind
   {
     None,
@@ -41,7 +55,8 @@ private:
   void Refresh();
   bool RefreshGCRuntimeMovie();
   bool RefreshWiiRuntimeMovie();
-  void PasteInputs();
+  void CopySelectedInputs();
+  bool PasteCopiedInputs(int start_row);
   void PopulateEditor();
   void PopulateGCEditor(int row, int controller);
   void PopulateWiiEditor(int row);
@@ -50,11 +65,30 @@ private:
   bool LoadFile(const QString& path);
   bool SaveFile(const QString& path);
   void UpdateStatusLabel();
+  void UpdateHotkeyFocusState();
+  std::vector<InputCell> GetSelectedInputCells() const;
   std::vector<int> GetSelectedRows() const;
+  bool IsInputCellSelected(const std::vector<InputCell>& cells, int row, int column) const;
+  bool MoveSelectedInputs(const std::vector<InputCell>& selected_cells, int dest_start);
+  void SelectCells(const std::vector<InputCell>& cells, int current_row, int current_column);
+  void SelectRows(const std::vector<int>& rows, int current_row);
+  void RefreshEditedRows(const std::vector<int>& rows);
+  bool HasCopiedInputs() const;
+  bool HasCompatibleCopiedInputs() const;
+  void ShowTableContextMenu(const QPoint& pos);
+  void ClearPendingDrag();
+  void BeginPendingDrag();
+  void FinishPendingDrag(bool apply_drag);
+  void UpdateDragPreview();
+  int GetPrimaryDataColumn() const;
   void ApplyGCEditorChange(Movie::ControllerState* state, const QObject* source) const;
   void ApplyWiiEditorChange(Movie::WiiRuntimeInputRow* row, const QObject* source) const;
   Movie::ControllerState BuildGCStateFromEditor() const;
   WiimoteEmu::SerializedWiimoteState BuildWiiSerializedStateFromEditor() const;
+  bool eventFilter(QObject* watched, QEvent* event) override;
+  void changeEvent(QEvent* event) override;
+  void showEvent(QShowEvent* event) override;
+  void hideEvent(QHideEvent* event) override;
 
   DTMEditorModel* m_model = nullptr;
   QTableView* m_table = nullptr;
@@ -62,9 +96,10 @@ private:
   QGroupBox* m_editor_box = nullptr;
   QStackedWidget* m_editor_stack = nullptr;
   QPushButton* m_open_button = nullptr;
-  QPushButton* m_paste_button = nullptr;
   QPushButton* m_save_button = nullptr;
+  QRubberBand* m_drag_preview = nullptr;
   QTimer* m_refresh_timer = nullptr;
+  QTimer* m_drag_hold_timer = nullptr;
 
   QCheckBox* m_connected = nullptr;
   QCheckBox* m_start = nullptr;
@@ -91,6 +126,12 @@ private:
 
   QLabel* m_wii_extension_label = nullptr;
   QLabel* m_wii_motion_plus_label = nullptr;
+  QLabel* m_wii_battery_label = nullptr;
+  QCheckBox* m_wii_hide_remote_inputs = nullptr;
+  QGroupBox* m_wii_remote_button_group = nullptr;
+  QGroupBox* m_wii_accel_group = nullptr;
+  QGroupBox* m_wii_ir_group = nullptr;
+  QGroupBox* m_wii_gyro_group = nullptr;
   QCheckBox* m_wii_reset = nullptr;
   QCheckBox* m_wii_a = nullptr;
   QCheckBox* m_wii_b = nullptr;
@@ -112,6 +153,10 @@ private:
   QSpinBox* m_wii_accel_y = nullptr;
   QSpinBox* m_wii_accel_z = nullptr;
   QSpinBox* m_wii_battery = nullptr;
+  std::array<QCheckBox*, 4> m_wii_ir_visible{};
+  std::array<QSpinBox*, 4> m_wii_ir_x{};
+  std::array<QSpinBox*, 4> m_wii_ir_y{};
+  std::array<QSpinBox*, 4> m_wii_ir_size{};
   QSpinBox* m_wii_gyro_x = nullptr;
   QSpinBox* m_wii_gyro_y = nullptr;
   QSpinBox* m_wii_gyro_z = nullptr;
@@ -120,6 +165,27 @@ private:
   QSpinBox* m_wii_nunchuk_accel_x = nullptr;
   QSpinBox* m_wii_nunchuk_accel_y = nullptr;
   QSpinBox* m_wii_nunchuk_accel_z = nullptr;
+  QCheckBox* m_wii_classic_a = nullptr;
+  QCheckBox* m_wii_classic_b = nullptr;
+  QCheckBox* m_wii_classic_x = nullptr;
+  QCheckBox* m_wii_classic_y = nullptr;
+  QCheckBox* m_wii_classic_zl = nullptr;
+  QCheckBox* m_wii_classic_zr = nullptr;
+  QCheckBox* m_wii_classic_l = nullptr;
+  QCheckBox* m_wii_classic_r = nullptr;
+  QCheckBox* m_wii_classic_minus = nullptr;
+  QCheckBox* m_wii_classic_plus = nullptr;
+  QCheckBox* m_wii_classic_home = nullptr;
+  QCheckBox* m_wii_classic_up = nullptr;
+  QCheckBox* m_wii_classic_down = nullptr;
+  QCheckBox* m_wii_classic_left = nullptr;
+  QCheckBox* m_wii_classic_right = nullptr;
+  QSpinBox* m_wii_classic_left_x = nullptr;
+  QSpinBox* m_wii_classic_left_y = nullptr;
+  QSpinBox* m_wii_classic_right_x = nullptr;
+  QSpinBox* m_wii_classic_right_y = nullptr;
+  QSpinBox* m_wii_classic_l_trigger = nullptr;
+  QSpinBox* m_wii_classic_r_trigger = nullptr;
 
   QString m_file_path;
   Movie::DTMHeader m_header{};
@@ -128,10 +194,23 @@ private:
   bool m_using_runtime_movie = false;
   int m_last_runtime_row = -1;
   u64 m_last_runtime_frame = 0;
+  u64 m_last_runtime_data_generation = 0;
   bool m_has_last_runtime_frame = false;
   bool m_dirty = false;
   bool m_updating_editor = false;
   bool m_refresh_in_progress = false;
+  bool m_drag_pending = false;
+  bool m_drag_active = false;
+  std::vector<InputCell> m_drag_cells;
+  int m_drag_press_row = -1;
+  int m_drag_press_column = -1;
+  int m_drag_hover_row = -1;
+  EditorMovieKind m_copied_movie_kind = EditorMovieKind::None;
+  std::vector<std::array<Movie::ControllerState, 4>> m_copied_gc_rows;
+  std::vector<std::array<bool, 4>> m_copied_gc_cells;
+  std::array<bool, 4> m_copied_gc_controllers{};
+  std::vector<Movie::WiiRuntimeInputRow> m_copied_wii_rows;
+  bool m_copied_wii_classic_only = false;
 
   Movie::WiiRuntimeInputRow m_current_wii_row{};
   WiimoteEmu::DesiredWiimoteState m_current_wii_state{};

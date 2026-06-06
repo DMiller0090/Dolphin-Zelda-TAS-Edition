@@ -4,6 +4,7 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -146,10 +147,24 @@ static_assert(sizeof(DTMHeader) == 256, "DTMHeader should be 256 bytes");
 struct GCRuntimeFrameSnapshot
 {
   std::array<bool, 4> active_controllers{};
+  std::array<bool, 4> active_gba_controllers{};
   std::vector<std::array<ControllerState, 4>> rows;
   std::vector<std::optional<u64>> row_game_frames;
   u64 current_frame = 0;
   u64 current_input_row = 0;
+  bool is_recording = false;
+  bool is_playing = false;
+  bool is_read_only = true;
+};
+
+struct GCRuntimeFrameMetadata
+{
+  std::array<bool, 4> active_controllers{};
+  std::array<bool, 4> active_gba_controllers{};
+  u64 row_count = 0;
+  u64 current_frame = 0;
+  u64 current_input_row = 0;
+  u64 data_generation = 0;
   bool is_recording = false;
   bool is_playing = false;
   bool is_read_only = true;
@@ -169,6 +184,18 @@ struct WiiRuntimeFrameSnapshot
   std::vector<std::optional<u64>> row_game_frames;
   u64 current_frame = 0;
   u64 current_input_row = 0;
+  bool is_recording = false;
+  bool is_playing = false;
+  bool is_read_only = true;
+};
+
+struct WiiRuntimeFrameMetadata
+{
+  std::array<bool, 4> active_wiimotes{};
+  u64 row_count = 0;
+  u64 current_frame = 0;
+  u64 current_input_row = 0;
+  u64 data_generation = 0;
   bool is_recording = false;
   bool is_playing = false;
   bool is_read_only = true;
@@ -253,9 +280,13 @@ public:
   std::string GetInfoDisplay();
   std::string GetRTCDisplay() const;
   std::string GetRerecords() const;
+  std::optional<GCRuntimeFrameMetadata> GetGCRuntimeFrameMetadata() const;
   std::optional<GCRuntimeFrameSnapshot> GetGCRuntimeFrameSnapshot() const;
+  std::optional<std::array<ControllerState, 4>> GetGCRuntimeFrameRow(u64 row) const;
   bool SetGCRuntimeFrameState(u64 frame, int controller, const ControllerState& state);
+  std::optional<WiiRuntimeFrameMetadata> GetWiiRuntimeFrameMetadata() const;
   std::optional<WiiRuntimeFrameSnapshot> GetWiiRuntimeFrameSnapshot() const;
+  std::optional<WiiRuntimeInputRow> GetWiiRuntimeFrameRow(u64 row) const;
   bool SetWiiRuntimeFrameState(u64 row, const WiimoteEmu::SerializedWiimoteState& serialized_state);
   std::optional<GCPadStatus> GetDisplayedPadStatus(int controller) const;
   std::optional<WiimoteEmu::DesiredWiimoteState> GetDisplayedWiimoteState(int wiimote) const;
@@ -328,6 +359,7 @@ private:
   mutable std::mutex m_temp_input_lock;
   std::vector<std::optional<u64>> m_gc_runtime_row_frames;
   std::vector<std::optional<u64>> m_wii_runtime_row_frames;
+  std::atomic<u64> m_runtime_data_generation{0};
 
   Core::System& m_system;
 };

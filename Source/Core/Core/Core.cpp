@@ -89,6 +89,7 @@
 #include "VideoCommon/FrameDumper.h"
 #include "VideoCommon/OnScreenDisplay.h"
 #include "VideoCommon/PerformanceMetrics.h"
+#include "VideoCommon/Present.h"
 #include "VideoCommon/VideoBackendBase.h"
 #include "VideoCommon/VideoEvents.h"
 
@@ -102,6 +103,7 @@ static Common::HookableEvent<Core::State> s_state_changed_event;
 
 static bool s_is_throttler_temp_disabled = false;
 static bool s_frame_step = false;
+static bool s_single_field_frame_step = false;
 static std::atomic<bool> s_stop_frame_step;
 
 // Threads other than the CPU thread must hold this when taking on the role of the CPU thread.
@@ -116,6 +118,17 @@ static std::atomic<State> s_state = State::Uninitialized;
 #ifdef USE_MEMORYWATCHER
 static std::unique_ptr<MemoryWatcher> s_memory_watcher;
 #endif
+
+static void RefreshPausedLegacyInfoDisplay()
+{
+  if (!Config::Get(Config::MAIN_MOVIE_USE_LEGACY_INPUT_DISPLAY) || !g_presenter)
+    return;
+
+  AsyncRequests::GetInstance()->PushEvent([] {
+    if (g_presenter)
+      g_presenter->Present();
+  });
+}
 
 static void Callback_FramePresented(const PresentInfo& present_info);
 
@@ -532,6 +545,7 @@ static void EmuThread(Core::System& system, std::unique_ptr<BootParameters> boot
   DeclareAsCPUThread();
 
   s_frame_step = false;
+  s_single_field_frame_step = false;
 
   // If settings have changed since the previous run, notify callbacks.
   CPUThreadConfigCallback::CheckForConfigChanges();
@@ -896,18 +910,30 @@ void Callback_NewField(Core::System& system)
 {
   if (s_frame_step)
   {
-    // To ensure that s_stop_frame_step is up to date, wait for the GPU thread queue to empty,
-    // since it is may contain a swap event (which will call Callback_FramePresented). This hurts
-    // the performance a little, but luckily, performance matters less when using frame stepping.
-    AsyncRequests::GetInstance()->WaitForEmptyQueue();
-
-    // Only stop the frame stepping if a new frame was displayed
-    // (as opposed to the previous frame being displayed for another frame).
-    if (s_stop_frame_step.load())
+    if (s_single_field_frame_step)
     {
+      s_single_field_frame_step = false;
       s_frame_step = false;
       system.GetCPU().Break();
       NotifyStateChanged(Core::GetState(system));
+      RefreshPausedLegacyInfoDisplay();
+    }
+    else
+    {
+      // To ensure that s_stop_frame_step is up to date, wait for the GPU thread queue to empty,
+      // since it is may contain a swap event (which will call Callback_FramePresented). This hurts
+      // the performance a little, but luckily, performance matters less when using frame stepping.
+      AsyncRequests::GetInstance()->WaitForEmptyQueue();
+
+      // Only stop the frame stepping if a new frame was displayed
+      // (as opposed to the previous frame being displayed for another frame).
+      if (s_stop_frame_step.load())
+      {
+        s_frame_step = false;
+        system.GetCPU().Break();
+        NotifyStateChanged(Core::GetState(system));
+        RefreshPausedLegacyInfoDisplay();
+      }
     }
   }
 
@@ -1038,12 +1064,36 @@ void DoFrameStep(Core::System& system)
   {
     // if already paused, frame advance for 1 frame
     s_stop_frame_step = false;
+    s_single_field_frame_step = false;
     s_frame_step = true;
     SetState(system, State::Running, false);
   }
   else if (!s_frame_step)
   {
     // if not paused yet, pause immediately instead
+    SetState(system, State::Paused);
+  }
+}
+
+void DoSingleFrameStep(Core::System& system)
+{
+  if (AchievementManager::GetInstance().IsHardcoreModeActive())
+  {
+    OSD::AddMessage("Frame stepping is disabled in RetroAchievements hardcore mode");
+    return;
+  }
+
+  std::lock_guard lock(s_core_mutex);
+
+  if (GetState(system) == State::Paused)
+  {
+    s_stop_frame_step = false;
+    s_single_field_frame_step = true;
+    s_frame_step = true;
+    SetState(system, State::Running, false);
+  }
+  else if (!s_frame_step)
+  {
     SetState(system, State::Paused);
   }
 }

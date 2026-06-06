@@ -40,6 +40,7 @@
     <ClCompile Include="Python\Modules\debugmodule.cpp" />
     <ClCompile Include="Python\Modules\doliomodule.cpp" />
     <ClCompile Include="Python\Modules\dolphinmodule.cpp" />
+    <ClCompile Include="Python\Modules\dtmmodule.cpp" />
     <ClCompile Include="Python\Modules\eventmodule.cpp" />
     <ClCompile Include="Python\Modules\guimodule.cpp" />
     <ClCompile Include="Python\Modules\memorymodule.cpp" />
@@ -58,6 +59,7 @@
     <ClInclude Include="Python\Modules\debugmodule.h" />
     <ClInclude Include="Python\Modules\doliomodule.h" />
     <ClInclude Include="Python\Modules\dolphinmodule.h" />
+    <ClInclude Include="Python\Modules\dtmmodule.h" />
     <ClInclude Include="Python\Modules\eventmodule.h" />
     <ClInclude Include="Python\Modules\guimodule.h" />
     <ClInclude Include="Python\Modules\memorymodule.h" />

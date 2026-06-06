@@ -79,7 +79,7 @@ static bool IsHotkey(int id, bool held = false)
 static void HandleFrameStepHotkeys()
 {
   constexpr int MAX_FRAME_STEP_DELAY = 60;
-  constexpr int FRAME_STEP_DELAY = 30;
+  constexpr int FRAME_STEP_DELAY = 36;
 
   static int frame_step_count = 0;
   static int frame_step_delay = 1;
@@ -101,6 +101,13 @@ static void HandleFrameStepHotkeys()
   if (IsHotkey(HK_FRAME_ADVANCE_RESET_SPEED))
   {
     frame_step_delay = 1;
+    return;
+  }
+
+  if (IsHotkey(HK_FRAME_ADVANCE_60FPS))
+  {
+    Settings::Instance().SetIsContinuouslyFrameStepping(false);
+    Core::QueueHostJob([](auto& system) { Core::DoSingleFrameStep(system); });
     return;
   }
 

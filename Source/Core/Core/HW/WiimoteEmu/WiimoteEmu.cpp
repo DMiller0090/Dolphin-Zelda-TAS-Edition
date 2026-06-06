@@ -4,6 +4,8 @@
 #include "Core/HW/WiimoteEmu/WiimoteEmu.h"
 
 #include <algorithm>
+#include <array>
+#include <cmath>
 #include <fstream>
 #include <memory>
 #include <optional>
@@ -507,10 +509,12 @@ void Wiimote::BuildDesiredWiimoteState(DesiredWiimoteState* target_state,
   }
   else if (sensor_bar_state == SensorBarState::Enabled)
   {
-    target_state->camera_points = CameraLogic::GetCameraPoints(
-        GetTotalTransformation(),
+    const Common::Vec2 field_of_view =
         Common::Vec2(m_fov_x_setting.GetValue(), m_fov_y_setting.GetValue()) / 360 *
-            float(MathUtil::TAU));
+        float(MathUtil::TAU);
+
+    target_state->camera_points = CameraLogic::GetCameraPoints(GetTotalTransformation(),
+                                                               field_of_view);
   }
   else
   {

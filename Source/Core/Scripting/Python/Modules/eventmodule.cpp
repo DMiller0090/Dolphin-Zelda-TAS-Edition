@@ -20,6 +20,7 @@
 #include "Scripting/Python/Utils/module.h"
 #include "Scripting/Python/Utils/object_wrapper.h"
 #include "Scripting/Python/PyScriptingBackend.h"
+#include "Scripting/ScriptingEngine.h"
 
 namespace PyScripting
 {
@@ -335,11 +336,16 @@ async def savestateload():
   Py::Object result = Py::LoadPyCodeIntoModule(module, pycode);
   if (result.IsNull())
   {
-    ERROR_LOG_FMT(CORE, "Failed to load embedded python code into event module");
+    ERROR_LOG_FMT(SCRIPTING, "Failed to load embedded python code into event module");
   }
   API::EventHub* event_hub = PyScripting::PyScriptingBackend::GetCurrent()->GetEventHub();
   state->event_hub = event_hub;
-  const std::function cleanup = [state] { EventContainer::UnregisterListeners(state); };
+  const std::function cleanup = [state] {
+    if (Scripting::ScriptingBackend::PythonSubinterpretersDisabled())
+      state->Reset();
+    else
+      EventContainer::UnregisterListeners(state);
+  };
   PyScripting::PyScriptingBackend::GetCurrent()->AddCleanupFunc(cleanup);
   EventContainer::RegisterListeners(Py::Take(module));
 }

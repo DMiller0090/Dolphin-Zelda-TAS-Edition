@@ -107,6 +107,8 @@ public:
   explicit GBAWidgetController() = default;
   ~GBAWidgetController() override;
 
+  static GBAWidget* GetWidgetForDevice(int device_number);
+
   void Create(std::weak_ptr<HW::GBA::Core> core, const HW::GBA::CoreInfo& info);
   void GameChanged(const HW::GBA::CoreInfo& info);
   void FrameEnded(std::span<const u32> video_buffer);
