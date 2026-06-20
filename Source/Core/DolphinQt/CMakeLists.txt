@@ -317,6 +317,8 @@ add_executable(dolphin-emu
   QtUtils/ClearLayoutRecursively.cpp
   QtUtils/ClearLayoutRecursively.h
   QtUtils/ClickableStatusBar.h
+  QtUtils/FlowLayout.cpp
+  QtUtils/FlowLayout.h
   QtUtils/DolphinFileDialog.cpp
   QtUtils/DolphinFileDialog.h
   QtUtils/DoubleClickEventFilter.cpp
