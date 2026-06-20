@@ -128,6 +128,10 @@ public:
   void SetIsContinuouslyFrameStepping(bool is_stepping);
   bool GetIsContinuouslyFrameStepping() const;
 
+  // When a movie is active its DTM settings are locked in the UI; override unlocks them.
+  void SetMovieSettingsOverridden(bool overridden);
+  bool IsMovieSettingsOverridden() const;
+
   // Graphics
   Config::ShowCursor GetCursorVisibility() const;
   bool GetLockCursor() const;
@@ -231,12 +235,14 @@ signals:
   void DevicesChanged();
   void WiiSpeakMuteChanged(bool muted);
   void EnableGfxModsChanged(bool enabled);
+  void MovieSettingsOverrideChanged(bool overridden);
 
 private:
   Settings();
 
   bool m_batch = false;
   std::atomic<bool> m_continuously_frame_stepping = false;
+  bool m_movie_settings_override = false;
 
   std::shared_ptr<NetPlay::NetPlayClient> m_client;
   std::shared_ptr<NetPlay::NetPlayServer> m_server;

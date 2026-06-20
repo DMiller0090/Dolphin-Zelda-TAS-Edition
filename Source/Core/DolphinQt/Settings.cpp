@@ -979,3 +979,18 @@ bool Settings::GetIsContinuouslyFrameStepping() const
 {
   return m_continuously_frame_stepping;
 }
+
+void Settings::SetMovieSettingsOverridden(bool overridden)
+{
+  if (m_movie_settings_override == overridden)
+    return;
+  m_movie_settings_override = overridden;
+  emit MovieSettingsOverrideChanged(overridden);
+  // Refresh every config control so its lock state updates at once.
+  emit ConfigChanged();
+}
+
+bool Settings::IsMovieSettingsOverridden() const
+{
+  return m_movie_settings_override;
+}
