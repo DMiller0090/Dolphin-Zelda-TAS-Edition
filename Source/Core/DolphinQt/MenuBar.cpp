@@ -274,16 +274,6 @@ void MenuBar::AddFileMenu()
   m_exit_action->setShortcuts({QKeySequence::Quit, QKeySequence(Qt::ALT | Qt::Key_F4)});
 }
 
-void MenuBar::SetWindowPresetsAutoSaveChecked(bool checked)
-{
-  if (!m_window_presets_auto_save)
-    return;
-
-  m_window_presets_auto_save->blockSignals(true);
-  m_window_presets_auto_save->setChecked(checked);
-  m_window_presets_auto_save->blockSignals(false);
-}
-
 void MenuBar::AddToolsMenu()
 {
   QMenu* tools_menu = addMenu(tr("&Tools"));
@@ -293,10 +283,6 @@ void MenuBar::AddToolsMenu()
   window_presets_menu->addAction(tr("Save Preset..."), this, &MenuBar::WindowPresetsSave);
   window_presets_menu->addAction(tr("Set Auto Load Preset..."), this,
                                  &MenuBar::WindowPresetsAutoLoad);
-  m_window_presets_auto_save = window_presets_menu->addAction(tr("Auto Save Preset"));
-  m_window_presets_auto_save->setCheckable(true);
-  connect(m_window_presets_auto_save, &QAction::toggled, this,
-          &MenuBar::WindowPresetsAutoSaveToggled);
   tools_menu->addSeparator();
 
   tools_menu->addAction(tr("&Resource Pack Manager"), this,

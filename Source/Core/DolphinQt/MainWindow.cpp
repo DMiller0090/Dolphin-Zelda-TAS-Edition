@@ -287,24 +287,6 @@ static void WriteAutoWindowPreset(AutoWindowPresetMode mode, const QString& name
   ini.Save(path);
 }
 
-static bool ReadAutoSaveWindowPreset()
-{
-  Common::IniFile ini;
-  ini.Load(File::GetUserPath(D_CONFIG_IDX) + "Dolphin.ini");
-  bool enabled = true;
-  ini.GetOrCreateSection("TAS")->Get("AutoSaveWindowPreset", &enabled, true);
-  return enabled;
-}
-
-static void WriteAutoSaveWindowPreset(bool enabled)
-{
-  Common::IniFile ini;
-  const std::string path = File::GetUserPath(D_CONFIG_IDX) + "Dolphin.ini";
-  ini.Load(path);
-  ini.GetOrCreateSection("TAS")->Set("AutoSaveWindowPreset", enabled);
-  ini.Save(path);
-}
-
 static QList<WindowPresetEntry> ReadWindowPresetEntries(const QString& path)
 {
   QList<WindowPresetEntry> entries;
@@ -601,9 +583,6 @@ MainWindow::~MainWindow()
   AchievementManager::GetInstance().Shutdown();
 #endif  // USE_RETRO_ACHIEVEMENTS
 
-  // Catch a close while a game is still running, before the windows are destroyed.
-  AutoSaveWindowPreset();
-
   delete m_render_widget;
   delete m_netplay_dialog;
 
@@ -829,9 +808,6 @@ void MainWindow::ConnectMenuBar()
   connect(m_menu_bar, &MenuBar::WindowPresetsLoad, this, &MainWindow::LoadWindowPreset);
   connect(m_menu_bar, &MenuBar::WindowPresetsAutoLoad, this,
           &MainWindow::ConfigureAutoWindowPreset);
-  m_menu_bar->SetWindowPresetsAutoSaveChecked(ReadAutoSaveWindowPreset());
-  connect(m_menu_bar, &MenuBar::WindowPresetsAutoSaveToggled, this,
-          [](bool enabled) { WriteAutoSaveWindowPreset(enabled); });
   connect(m_menu_bar, &MenuBar::StartNetPlay, this, &MainWindow::ShowNetPlaySetupDialog);
   connect(m_menu_bar, &MenuBar::BrowseNetPlay, this, &MainWindow::ShowNetPlayBrowser);
   connect(m_menu_bar, &MenuBar::ShowFIFOPlayer, this, &MainWindow::ShowFIFOPlayer);
@@ -1177,9 +1153,6 @@ void MainWindow::TogglePause()
 
 void MainWindow::OnStopComplete()
 {
-  // Capture the layout while the stopped game's windows still exist.
-  AutoSaveWindowPreset();
-
   m_stop_requested = false;
   HideRenderWidget(!m_exit_requested, m_exit_requested);
 #ifdef USE_DISCORD_PRESENCE
@@ -1649,12 +1622,6 @@ void MainWindow::SaveWindowPreset()
   if (trimmed_name.isEmpty())
     return;
 
-  if (WriteWindowPreset(trimmed_name, true))
-    m_last_window_preset_name = trimmed_name;
-}
-
-bool MainWindow::WriteWindowPreset(const QString& trimmed_name, bool show_errors)
-{
   QList<WindowPresetEntry> entries = ReadWindowPresetEntries(WindowPresetsPath());
   entries.erase(std::remove_if(entries.begin(), entries.end(),
                                [&trimmed_name](const WindowPresetEntry& entry) {
@@ -1723,11 +1690,10 @@ bool MainWindow::WriteWindowPreset(const QString& trimmed_name, bool show_errors
   QSaveFile file(WindowPresetsPath());
   if (!file.open(QIODevice::WriteOnly | QIODevice::Text))
   {
-    if (show_errors)
-      ModalMessageBox::warning(
-          this, tr("Error"),
-          tr("Failed to save window presets to \"%1\".").arg(WindowPresetsPath()));
-    return false;
+    ModalMessageBox::warning(
+        this, tr("Error"),
+        tr("Failed to save window presets to \"%1\".").arg(WindowPresetsPath()));
+    return;
   }
 
   QTextStream out(&file);
@@ -1745,27 +1711,10 @@ bool MainWindow::WriteWindowPreset(const QString& trimmed_name, bool show_errors
 
   if (!file.commit())
   {
-    if (show_errors)
-      ModalMessageBox::warning(
-          this, tr("Error"),
-          tr("Failed to save window presets to \"%1\".").arg(WindowPresetsPath()));
-    return false;
+    ModalMessageBox::warning(
+        this, tr("Error"),
+        tr("Failed to save window presets to \"%1\".").arg(WindowPresetsPath()));
   }
-
-  return true;
-}
-
-void MainWindow::AutoSaveWindowPreset()
-{
-  if (!ReadAutoSaveWindowPreset() || ReadAutoWindowPresetMode() == AutoWindowPresetMode::Disabled)
-    return;
-
-  // Round-trips with auto-load: save under the preset that will be restored next launch.
-  const QString preset_name = m_last_window_preset_name.trimmed();
-  if (preset_name.isEmpty())
-    return;
-
-  WriteWindowPreset(preset_name, false);
 }
 
 void MainWindow::LoadWindowPreset()

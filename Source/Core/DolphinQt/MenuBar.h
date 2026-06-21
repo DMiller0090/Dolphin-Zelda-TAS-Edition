@@ -53,8 +53,6 @@ public:
 
   QMenu* GetListColumnsMenu() const { return m_cols_menu; }
 
-  void SetWindowPresetsAutoSaveChecked(bool checked);
-
   void InstallUpdateManually();
 
 signals:
@@ -107,7 +105,6 @@ signals:
   void WindowPresetsSave();
   void WindowPresetsLoad();
   void WindowPresetsAutoLoad();
-  void WindowPresetsAutoSaveToggled(bool enabled);
 
 #ifdef USE_RETRO_ACHIEVEMENTS
   void ShowAchievementsWindow();
@@ -216,7 +213,6 @@ private:
   // File
   QAction* m_open_action;
   QAction* m_exit_action;
-  QAction* m_window_presets_auto_save = nullptr;
   QAction* m_change_disc;
   QAction* m_eject_disc;
   QMenu* m_backup_menu;
