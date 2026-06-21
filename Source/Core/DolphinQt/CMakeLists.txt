@@ -394,6 +394,8 @@ add_executable(dolphin-emu
   TAS/GBATASInputWindow.h
   TAS/IRWidget.cpp
   TAS/IRWidget.h
+  TAS/SectionResizer.cpp
+  TAS/SectionResizer.h
   TAS/StickWidget.cpp
   TAS/StickWidget.h
   TAS/TASCheckBox.cpp

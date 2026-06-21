@@ -232,6 +232,7 @@
     <ClCompile Include="TAS\GCTASInputWindow.cpp" />
     <ClCompile Include="TAS\GBATASInputWindow.cpp" />
     <ClCompile Include="TAS\IRWidget.cpp" />
+    <ClCompile Include="TAS\SectionResizer.cpp" />
     <ClCompile Include="TAS\StickWidget.cpp" />
     <ClCompile Include="TAS\TASCheckBox.cpp" />
     <ClCompile Include="TAS\TASInputWindow.cpp" />
@@ -447,6 +448,7 @@
     <QtMoc Include="TAS\GCTASInputWindow.h" />
     <QtMoc Include="TAS\GBATASInputWindow.h" />
     <QtMoc Include="TAS\IRWidget.h" />
+    <QtMoc Include="TAS\SectionResizer.h" />
     <QtMoc Include="TAS\StickWidget.h" />
     <QtMoc Include="TAS\TASCheckBox.h" />
     <QtMoc Include="TAS\TASInputWindow.h" />

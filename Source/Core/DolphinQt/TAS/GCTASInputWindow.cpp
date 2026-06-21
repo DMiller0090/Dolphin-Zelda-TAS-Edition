@@ -188,6 +188,11 @@ GCTASInputWindow::GCTASInputWindow(QWidget* parent, int controller_id)
   RegisterVisibilitySection(tr("Favorite Scripts"), "GC.FavoriteScripts", favorites_widget);
   FinalizeVisibilitySections();
 
+  MakeSectionResizable("GC.Triggers", m_triggers_box);
+  MakeSectionResizable("GC.Buttons", m_buttons_box);
+  MakeSectionResizable("GC.FavoriteScripts", favorites_widget);
+  MakeSectionResizable("GC.Settings", m_settings_box);
+
   if (m_toggle_lines && main_stick_widget)
     connect(m_toggle_lines, &QCheckBox::toggled, main_stick_widget, &StickWidget::SetAxisLines);
   if (m_toggle_lines && c_stick_widget)

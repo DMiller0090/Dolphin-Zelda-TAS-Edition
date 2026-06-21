@@ -30,6 +30,7 @@
 
 #include <algorithm>
 #include <future>
+#include <map>
 #include <optional>
 #include <variant>
 
@@ -347,6 +348,64 @@ static QList<WindowPresetEntry> ReadWindowPresetEntries(const QString& path)
 static QString MakeWindowPresetKey(const QString& prefix, int index)
 {
   return QStringLiteral("%1%2").arg(prefix).arg(index + 1);
+}
+
+// Per-section drag-resized widths for a TAS window, stored on dedicated CSV rows tagged "#sections".
+struct WindowSectionEntry
+{
+  QString preset;
+  QString window;
+  std::map<std::string, int> widths;
+};
+
+static QList<WindowSectionEntry> ReadWindowSectionEntries(const QString& path)
+{
+  QList<WindowSectionEntry> entries;
+  QFile file(path);
+  if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
+    return entries;
+
+  const QString suffix = QStringLiteral("#sections");
+  QTextStream in(&file);
+  while (!in.atEnd())
+  {
+    const QString line = in.readLine().trimmed();
+    if (line.isEmpty())
+      continue;
+
+    const QStringList parts = line.split(QLatin1Char(','));
+    if (parts.size() < 3)
+      continue;
+
+    const QString tag = parts[parts.size() - 2].trimmed();
+    if (!tag.endsWith(suffix))
+      continue;
+
+    const QString window = tag.left(tag.size() - suffix.size());
+    const QString preset = parts.mid(0, parts.size() - 2).join(QLatin1Char(',')).trimmed();
+    const QString payload = parts[parts.size() - 1].trimmed();
+    if (preset.isEmpty() || window.isEmpty() || payload.isEmpty())
+      continue;
+
+    std::map<std::string, int> widths;
+    const QStringList pairs = payload.split(QLatin1Char('|'));
+    for (const QString& pair : pairs)
+    {
+      const int colon = pair.lastIndexOf(QLatin1Char(':'));
+      if (colon <= 0)
+        continue;
+      bool ok = false;
+      const int width = pair.mid(colon + 1).toInt(&ok);
+      if (!ok || width <= 0)
+        continue;
+      widths[pair.left(colon).toStdString()] = width;
+    }
+
+    if (!widths.empty())
+      entries.push_back({preset, window, std::move(widths)});
+  }
+
+  return entries;
 }
 
 static void ApplyWindowGeometry(QWidget* window, const WindowPresetEntry& entry)
@@ -1570,6 +1629,22 @@ void MainWindow::SaveWindowPreset()
                                }),
                 entries.end());
 
+  QList<WindowSectionEntry> section_entries = ReadWindowSectionEntries(WindowPresetsPath());
+  section_entries.erase(std::remove_if(section_entries.begin(), section_entries.end(),
+                                       [&trimmed_name](const WindowSectionEntry& entry) {
+                                         return entry.preset == trimmed_name;
+                                       }),
+                        section_entries.end());
+
+  auto add_section_entry = [&](const QString& window_key, TASInputWindow* window) {
+    if (!window)
+      return;
+    std::map<std::string, int> widths = window->GetSectionWidths();
+    if (widths.empty())
+      return;
+    section_entries.push_back({trimmed_name, window_key, std::move(widths)});
+  };
+
   auto add_window_entry = [&](const QString& window_key, const QWidget* window) {
     if (!window)
       return;
@@ -1589,11 +1664,23 @@ void MainWindow::SaveWindowPreset()
     add_window_entry(QStringLiteral("RenderWindow"), m_render_widget);
 
   for (int i = 0; i < static_cast<int>(m_gc_tas_input_windows.size()); ++i)
-    add_window_entry(MakeWindowPresetKey(QStringLiteral("GCTAS"), i), m_gc_tas_input_windows[i]);
+  {
+    const QString key = MakeWindowPresetKey(QStringLiteral("GCTAS"), i);
+    add_window_entry(key, m_gc_tas_input_windows[i]);
+    add_section_entry(key, m_gc_tas_input_windows[i]);
+  }
   for (int i = 0; i < static_cast<int>(m_gba_tas_input_windows.size()); ++i)
-    add_window_entry(MakeWindowPresetKey(QStringLiteral("GBATAS"), i), m_gba_tas_input_windows[i]);
+  {
+    const QString key = MakeWindowPresetKey(QStringLiteral("GBATAS"), i);
+    add_window_entry(key, m_gba_tas_input_windows[i]);
+    add_section_entry(key, m_gba_tas_input_windows[i]);
+  }
   for (int i = 0; i < static_cast<int>(m_wii_tas_input_windows.size()); ++i)
-    add_window_entry(MakeWindowPresetKey(QStringLiteral("WiiTAS"), i), m_wii_tas_input_windows[i]);
+  {
+    const QString key = MakeWindowPresetKey(QStringLiteral("WiiTAS"), i);
+    add_window_entry(key, m_wii_tas_input_windows[i]);
+    add_section_entry(key, m_wii_tas_input_windows[i]);
+  }
 #ifdef HAS_LIBMGBA
   for (int i = 0; i < num_gc_controllers; ++i)
     add_window_entry(MakeWindowPresetKey(QStringLiteral("GBA"), i),
@@ -1613,6 +1700,14 @@ void MainWindow::SaveWindowPreset()
   for (const auto& entry : entries)
     out << entry.preset << ',' << entry.window << ',' << entry.x << ',' << entry.y << ','
         << entry.width << ',' << entry.height << '\n';
+  for (const auto& entry : section_entries)
+  {
+    QStringList pairs;
+    for (const auto& [key, width] : entry.widths)
+      pairs << QStringLiteral("%1:%2").arg(QString::fromStdString(key)).arg(width);
+    out << entry.preset << ',' << entry.window << "#sections," << pairs.join(QLatin1Char('|'))
+        << '\n';
+  }
 
   if (!file.commit())
   {
@@ -1770,6 +1865,40 @@ void MainWindow::ApplyWindowPreset(const QString& preset_name, bool warn_if_miss
       continue;
     }
 #endif
+  }
+
+  const QList<WindowSectionEntry> section_entries =
+      ReadWindowSectionEntries(WindowPresetsPath());
+  for (const auto& entry : section_entries)
+  {
+    if (entry.preset != preset_name)
+      continue;
+
+    TASInputWindow* window = nullptr;
+    if (entry.window.startsWith(QStringLiteral("GCTAS")))
+    {
+      const int index = entry.window.mid(5).toInt() - 1;
+      if (index >= 0 && index < static_cast<int>(m_gc_tas_input_windows.size()))
+        window = m_gc_tas_input_windows[index];
+    }
+    else if (entry.window.startsWith(QStringLiteral("GBATAS")))
+    {
+      const int index = entry.window.mid(6).toInt() - 1;
+      if (index >= 0 && index < static_cast<int>(m_gba_tas_input_windows.size()))
+        window = m_gba_tas_input_windows[index];
+    }
+    else if (entry.window.startsWith(QStringLiteral("WiiTAS")))
+    {
+      const int index = entry.window.mid(6).toInt() - 1;
+      if (index >= 0 && index < static_cast<int>(m_wii_tas_input_windows.size()))
+        window = m_wii_tas_input_windows[index];
+    }
+
+    if (window)
+    {
+      window->ApplySectionWidths(entry.widths);
+      applied = true;
+    }
   }
 
   if (!applied && warn_if_missing)
