@@ -338,6 +338,7 @@ extern const Info<bool> MAIN_MOVIE_SHOW_RTC;
 extern const Info<bool> MAIN_MOVIE_SHOW_RERECORD;
 extern const Info<bool> MAIN_MOVIE_SHOW_OSD;
 extern const Info<bool> MAIN_MOVIE_VIEW_TAS_INPUTS;
+extern const Info<bool> MAIN_MOVIE_CLEAR_SAVES_ON_PLAYBACK;
 
 // Main.Input
 
