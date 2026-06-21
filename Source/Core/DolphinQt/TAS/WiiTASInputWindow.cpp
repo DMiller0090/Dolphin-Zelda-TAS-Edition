@@ -593,6 +593,18 @@ WiiTASInputWindow::WiiTASInputWindow(QWidget* parent, int num) : TASInputWindow(
   RegisterVisibilitySection(tr("Favorite Scripts"), SECTION_WII_FAVORITE_SCRIPTS,
                             m_favorites_widget);
   FinalizeVisibilitySections();
+
+  MakeSectionResizable(SECTION_WII_REMOTE_ACCELEROMETER, m_remote_accelerometer_box);
+  MakeSectionResizable(SECTION_WII_REMOTE_GYROSCOPE, m_remote_gyroscope_box);
+  MakeSectionResizable(SECTION_WII_NUNCHUK_ACCELEROMETER, m_nunchuk_accelerometer_box);
+  MakeSectionResizable(SECTION_WII_TRIGGERS, m_triggers_box);
+  MakeSectionResizable("Wii.RemoteButtons", m_remote_buttons_box);
+  MakeSectionResizable("Wii.NunchukButtons", m_nunchuk_buttons_box);
+  MakeSectionResizable("Wii.ClassicButtons", m_classic_buttons_box);
+  MakeSectionResizable(SECTION_WII_SETTINGS, m_settings_box);
+  MakeSectionResizable(SECTION_WII_BATTERY, m_battery_box);
+  MakeSectionResizable(SECTION_WII_RESET, m_reset_box);
+  MakeSectionResizable(SECTION_WII_FAVORITE_SCRIPTS, m_favorites_widget);
 }
 
 WiiTASInputWindow::~WiiTASInputWindow()
