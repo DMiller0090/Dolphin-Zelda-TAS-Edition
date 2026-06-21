@@ -215,6 +215,8 @@ private:
   void ShowDTMEditor();
   void ShowOSDWindow();
   void SaveWindowPreset();
+  bool WriteWindowPreset(const QString& trimmed_name, bool show_errors);
+  void AutoSaveWindowPreset();
   void LoadWindowPreset();
   void ConfigureAutoWindowPreset();
   void ApplyWindowPreset(const QString& preset_name, bool warn_if_missing);
