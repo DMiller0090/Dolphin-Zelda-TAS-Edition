@@ -48,6 +48,8 @@ protected:
       bf.setBold(IsConfigLocal());
       Derived::setFont(bf);
 
+      UpdateMovieLock();
+
       // This isn't signal blocked because the UI may need to be updated.
       m_updating = true;
       OnConfigChanged();
@@ -66,6 +68,15 @@ protected:
     if (m_layer != nullptr)
     {
       m_layer->Set(m_location, value);
+      Config::OnConfigChanged();
+      return;
+    }
+
+    // A movie owns this setting (override is on, else the control is disabled): edit the Movie
+    // layer so the change applies live and is discarded when the movie stops.
+    if (Config::GetActiveLayerForConfig(m_location) == Config::LayerType::Movie)
+    {
+      Config::GetLayer(Config::LayerType::Movie)->Set(m_location, value);
       Config::OnConfigChanged();
       return;
     }
@@ -101,6 +112,27 @@ private:
       return Config::GetActiveLayerForConfig(m_location) != Config::LayerType::Base;
   }
 
+  // True while a movie's DTM holds this setting and the override is off; such controls are locked
+  // so playback/recording config can't drift from the movie.
+  bool IsMovieLocked() const
+  {
+    return m_layer == nullptr &&
+           Config::GetActiveLayerForConfig(m_location) == Config::LayerType::Movie &&
+           !Settings::Instance().IsMovieSettingsOverridden();
+  }
+
+  void UpdateMovieLock()
+  {
+    const bool locked = IsMovieLocked();
+    if (locked == m_movie_locked)
+      return;
+
+    if (locked)
+      m_enabled_before_movie_lock = Derived::isEnabled();
+    Derived::setEnabled(locked ? false : m_enabled_before_movie_lock);
+    m_movie_locked = locked;
+  }
+
   void mousePressEvent(QMouseEvent* event) override
   {
     if (m_layer != nullptr && event->button() == Qt::RightButton)
@@ -115,6 +147,8 @@ private:
   }
 
   bool m_updating = false;
+  bool m_movie_locked = false;
+  bool m_enabled_before_movie_lock = true;
   const Config::Location m_location;
   Config::Layer* m_layer;
 };

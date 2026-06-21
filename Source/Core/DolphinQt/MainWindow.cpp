@@ -2567,6 +2567,9 @@ void MainWindow::OnPlayRecording()
   if (dtm_file.isEmpty())
     return;
 
+  // A new movie should start with its DTM settings locked.
+  Settings::Instance().SetMovieSettingsOverridden(false);
+
   auto& movie = m_system.GetMovie();
   if (!movie.IsReadOnly())
   {
@@ -2600,6 +2603,9 @@ void MainWindow::OnStartRecording()
     movie.SetReadOnly(false);
     emit ReadOnlyModeChanged(true);
   }
+
+  // A new recording should start with its DTM settings locked.
+  Settings::Instance().SetMovieSettingsOverridden(false);
 
   Movie::ControllerTypeArray controllers{};
   Movie::WiimoteEnabledArray wiimotes{};

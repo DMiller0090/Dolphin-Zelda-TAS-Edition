@@ -136,10 +136,13 @@ void MenuBar::OnEmulationStateChanged(Core::State state)
 
   // Movie
   m_recording_read_only->setEnabled(running);
+  m_movie_settings_override->setEnabled(running);
   if (!running)
   {
     m_recording_stop->setEnabled(false);
     m_recording_export->setEnabled(false);
+    // Drop the override so the next movie starts with its settings locked.
+    Settings::Instance().SetMovieSettingsOverridden(false);
   }
   const bool can_start_from_boot = m_game_selected && state == Core::State::Uninitialized;
   const bool can_start_from_savestate =
@@ -859,6 +862,14 @@ void MenuBar::AddMovieMenu()
   m_recording_read_only->setChecked(Core::System::GetInstance().GetMovie().IsReadOnly());
   connect(m_recording_read_only, &QAction::toggled,
           [](bool value) { Core::System::GetInstance().GetMovie().SetReadOnly(value); });
+
+  m_movie_settings_override = movie_menu->addAction(tr("Override TAS Settings Lock"));
+  m_movie_settings_override->setCheckable(true);
+  m_movie_settings_override->setChecked(false);
+  connect(m_movie_settings_override, &QAction::toggled,
+          [](bool value) { Settings::Instance().SetMovieSettingsOverridden(value); });
+  connect(&Settings::Instance(), &Settings::MovieSettingsOverrideChanged, m_movie_settings_override,
+          &QAction::setChecked);
 
   movie_menu->addAction(tr("TAS Input"), this, [this] { emit ShowTASInput(); });
   m_dtm_editor = movie_menu->addAction(tr("DTM Editor"), this, [this] { emit ShowDTMEditor(); });

@@ -262,6 +262,7 @@ private:
   QAction* m_recording_start;
   QAction* m_recording_stop;
   QAction* m_recording_read_only;
+  QAction* m_movie_settings_override;
   QAction* m_movie_window;
   QAction* m_dtm_editor;
 
